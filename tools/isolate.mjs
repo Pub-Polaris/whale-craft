@@ -111,12 +111,16 @@ if (cmd === 'start') {
     // 🔴 隔离实例有**自己的**状态目录：配置/账户改动只落副本，绝不碰生产。
     // 🔴 记忆根也钉在副本里：否则"进 MC 模式会话 / 点开 MC设置"会按会话工作区去建 `.whale-craft/`，
     //    而那些会话的工作区是**生产工作区** → 隔离实例会往生产里写文件。
-    env: { ...process.env, WHALE_CRAFT_STATE_DIR: stateDir, WHALE_CRAFT_MEMORY_DIR: join(stateDir, 'memory') },
+    // 🔴 preset 根目录**没法 redirect**（它在 DSH 的 agent-presets 配置里），也就是
+    //    `~/.dsh/.agent-presets` 与本机生产共用 —— 插件"给已存在的 preset 补工具组"会直接改
+    //    用户手写的那份。所以隔离实例一律禁止写 preset（插件认这个开关，只记日志）。
+    env: { ...process.env, WHALE_CRAFT_STATE_DIR: stateDir, WHALE_CRAFT_MEMORY_DIR: join(stateDir, 'memory'), WHALE_CRAFT_NO_PRESET_WRITE: '1' },
   })
   child.unref()
   writeFileSync(PIDFILE, JSON.stringify({ pid: child.pid, port, stateDir, at: new Date().toISOString() }, null, 2))
   console.log(`已起隔离实例：pid=${child.pid} port=${port}`)
-  console.log(`  状态目录（副本）：${stateDir}`)
+  console.log('  状态目录（副本）：' + stateDir)
+  console.log('  ⚠️ preset 根目录与生产共用 → 已用 WHALE_CRAFT_NO_PRESET_WRITE=1 禁掉写 preset')
   console.log(`  日志：whale_craft/logs/isolate-${port}-out.log`)
   console.log('  等 ~40 秒后跑 `node whale_craft/tools/isolate.mjs status` 看整树是否加载成功')
   process.exit(0)

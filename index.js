@@ -747,12 +747,23 @@ export function apply(ctx, config) {
     }
 
     // ③ 再强清该会话全部后台任务
+    //
+    // 🔴 2026-09-24：**只杀属于本会话的 job**。宿主 `jobs-local` 的 `list(caller)` 口径是
+    //    `job.owner === undefined || job.owner.id === session` —— 除了自己的，它**还会把
+    //    `owner === undefined` 的"无主 job"（宿主自己起的后台任务）一起列出来**；
+    //    而 `assertAccess()` 是 `if (job.owner !== undefined && ...) throw`，**对无主 job 不设防**。
+    //    照旧代码那样"列出来就全杀"，点一次「强制停止」会顺手清掉跟这个会话毫无关系的宿主任务。
+    //    （同一个坑 PR #2 的作者也报过，见 <user>/whale-craft#2。）
+    //    判据用**快照里带的 owner 身份**，两种宿主版本的字段名都认：
+    //    `ownerSession`（本版）/ `owner`（0.1.7 起）。
     const jobs = ctx.get('jobs')
-    if (jobs && agent) {
+    if (jobs && typeof sessionId === 'string' && sessionId) {
       try {
         for (const j of jobs.list(agent) ?? []) {
           const id = j?.id ?? j?.jobId
           if (!id) continue
+          const ownerOf = j?.ownerSession ?? j?.owner
+          if (ownerOf !== sessionId) continue          // 无主 job / 别人的 job：不归我们管
           try { jobs.kill(id, agent, reason); out.killedJobs.push(id) } catch {}
         }
       } catch (e) { out.jobsError = String(e?.message ?? e) }
@@ -3045,18 +3056,44 @@ export function apply(ctx, config) {
    * 为什么要探：这些包是按 preset 挂载的，"在不在"取决于 DSH 版本与随附 bundle。
    * 给一份**装不到某个包**的 preset 加组 = 让那份 preset 直接挂不起来（MC 模式整个坏掉）——
    * 比"少一个工具"糟得多。判据很直接：**随附的 preset 里有没有人引用它**
-   * （随附 Web 的 standard/ptc/cordis 有 tool-fs/tool-jobs/present，minimal 一个都没有）。
+   * （随附 Web 的 standard/ptc/cordis 有 tool-fs/tool-jobs/present/压缩组，minimal 一个都没有）。
+   *
+   * 🔴 2026-09-24（GitHub issue #1，用户 huohai2 报）：**这里绝对不能用 `agentPresets.list()`**。
+   *    宿主那个方法是 **`async list()`**（`agent-presets/src/index.ts`：`async list(): Promise<AgentPreset[]>`），
+   *    在同步 `for...of` 里迭代一个 Promise 会抛 `TypeError: ... is not iterable`，
+   *    被 `catch` 吞掉 ⇒ `shipped` 恒空 ⇒ **每一组都被判成"本部署没人引用"**，
+   *    于是自动建出来的「MC模式」preset 一组工具都补不上（缺 tool-fs/tool-jobs/present
+   *    与压缩组），而且**不报错**（只留一行看着很合理的日志）。
+   *    这里改用**同步**的 `svc.roots`（宿主是同步 getter）自己扫：
+   *    每个根下 `<root>/<presetId>/agent.cordis.yml`。
    */
   let availableGroups = null
   const availableToolGroups = () => {
     if (availableGroups) return availableGroups
     const shipped = []
+    let scanned = 0
     try {
-      for (const row of agentPresetsSvc?.list?.() ?? []) {
-        const text = compositionOf(row)
-        if (text) shipped.push(text)
+      const roots = Array.isArray(agentPresetsSvc?.roots) ? agentPresetsSvc.roots : []
+      for (const root of roots) {
+        const dir = root?.path ? expandHome(String(root.path)) : ''
+        if (!dir) continue
+        let entries = []
+        try { entries = readdirSync(dir, { withFileTypes: true }) } catch { continue }   // 根不存在/不可读：跳过这个根
+        for (const ent of entries) {
+          if (!ent?.isDirectory?.()) continue
+          const p = join(dir, ent.name, 'agent.cordis.yml')
+          try {
+            if (!existsSync(p)) continue          // 目录占着 id 但组成缺失（宿主也认它是坏的）
+            shipped.push(readFileSync(p, 'utf8'))
+            scanned++
+          } catch { /* 单个 preset 读不了不影响别的 */ }
+        }
       }
-    } catch { /* 读不到就当没有 */ }
+    } catch (e) {
+      // 探针自己坏了必须留痕：静默会让"判据失效"伪装成"确实没有"
+      logLine(`探"本部署有哪些 preset 工具包"失败（按没有处理）：${e?.message ?? e}`)
+    }
+    if (!scanned) logLine('一个随附 preset 的组成都没扫到（roots 为空或不可读）→ 保守起见不往 MC 模式 preset 里加工具组')
     const all = shipped.join('\n')
     availableGroups = MC_PRESET_TOOL_GROUPS.filter((g) => all.includes(g.pkg))
     const missing = MC_PRESET_TOOL_GROUPS.filter((g) => !all.includes(g.pkg)).map((g) => g.pkg)
@@ -3064,7 +3101,17 @@ export function apply(ctx, config) {
     return availableGroups
   }
 
-  /** 给**已存在**的 preset 补工具组（用 `leave`/`meta` 分支时用；不动别的行） */
+  /**
+   * 给**已存在**的 preset 补工具组（用 `leave`/`meta` 分支时用；不动别的行）。
+   *
+   * 🔴 2026-09-24：这条路会动**用户自己写的** composition（本机那份 `minecraft` 就是用户手写的），
+   *    所以：
+   *      ① 动之前**留一份原始副本**（`agent.cordis.yml.bak-whale-craft`，只留第一次那一份，
+   *         之后不覆盖 ⇒ 那份永远是"插件碰它之前"的样子，随时能翻回去）；
+   *      ② 隔离实例里**一律不写**（`WHALE_CRAFT_NO_PRESET_WRITE`）—— 隔离实例的 preset 根目录
+   *         跟生产是**同一个**（`~/.dsh/.agent-presets`，redirect 不了），写下去就是改生产文件。
+   *         2026-09-24 实测踩到：隔离实例第一次跑就把压缩组加进了用户手写的那份。
+   */
   const ensureToolGroupsInPreset = (svc, id) => {
     try {
       const groups = availableToolGroups()
@@ -3076,8 +3123,16 @@ export function apply(ctx, config) {
       const cur = readFileSync(p, 'utf8')
       const next = patchToolGroupsIntoComposition(cur, groups)
       if (next === null) return false
+      if (process.env.WHALE_CRAFT_NO_PRESET_WRITE) {
+        logLine(`隔离模式（WHALE_CRAFT_NO_PRESET_WRITE）：跳过改 preset「${id}」的 composition（本该补：${groups.filter((g) => !cur.includes(g.pkg)).map((g) => g.pkg).join(', ')}）`)
+        return false
+      }
+      try {
+        const bak = join(dir, 'agent.cordis.yml.bak-whale-craft')
+        if (!existsSync(bak)) copyFileSync(p, bak)
+      } catch { /* 备份失败不拦着修，但下面日志里会说 */ }
       writeFileSync(p, next, 'utf8')
-      logLine(`已给 MC 模式 preset（${id}）补上工具组：${groups.filter((g) => !cur.includes(g.pkg)).map((g) => g.pkg).join(', ')}`)
+      logLine(`已给 MC 模式 preset（${id}）补上工具组：${groups.filter((g) => !cur.includes(g.pkg)).map((g) => g.pkg).join(', ')}（原始副本：agent.cordis.yml.bak-whale-craft）`)
       return true
     } catch (e) { logLine(`补 preset 工具组失败（不影响挂载）：${e.message}`); return false }
   }

@@ -10,8 +10,14 @@
  *
  * 用法：node whale_craft/selfcheck.mjs
  */
+import { fileURLToPath } from 'node:url'
+
 // 自检不许污染生产状态：日志、记忆库、全局配置都改到自检专用位置
-process.env.MC_LOG = new URL('./logs/selfcheck.log', import.meta.url).pathname.replace(/^\//, '')
+// 🔴 2026-09-24（GitHub issue #1 附带）：这里**不能用 `new URL(...).pathname`** ——
+//    路径里有非 ASCII 字符（例如家目录是中文用户名）时，`.pathname` 会把它百分号编码成
+//    `%E4%B8%80…`，那个目录不存在 ⇒ 自检在"每会话实例分离"处 `EPERM: mkdir` 崩掉。
+//    运行时不受影响（它走 `homedir()`），只有自检会被卡住。
+process.env.MC_LOG = fileURLToPath(new URL('./logs/selfcheck.log', import.meta.url))
 {
   const { mkdtempSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
@@ -74,7 +80,33 @@ const presetPaths = new Map()
         "      name: '@deepseek-ai/dsh-terminal'",
         '',
       ].join('\n')
-      : `# ${id} composition\n`
+      // 🔴 2026-09-24（issue #1）：其他随包 preset 里**必须真的引用那几个包**，否则
+      //    "探针能不能发现它们"根本测不出来（旧夹具只有一行注释 → 探不动也照样"看起来对"）。
+      //    真实部署里 standard/ptc/cordis 都引用了这几组，这里照实模拟。
+      : [
+        `# ${id} composition`,
+        '',
+        '- id: tool-fs',
+        "  name: '@deepseek-ai/dsh-tool-fs'",
+        '',
+        '- id: tool-jobs',
+        "  name: '@deepseek-ai/dsh-tool-jobs'",
+        '',
+        '- id: present',
+        "  name: '@deepseek-ai/dsh-tool-present'",
+        '',
+        '- id: compaction',
+        '  name: cordis:group',
+        '  group: true',
+        '  config:',
+        '    - id: compaction-basic',
+        "      name: '@deepseek-ai/dsh-compaction-basic'",
+        '    - id: command-compact',
+        "      name: '@deepseek-ai/dsh-command-compact'",
+        '    - id: tool-result-pruner',
+        "      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'",
+        '',
+      ].join('\n')
     writeFileSync(jnTop(dir, 'agent.cordis.yml'), comp, 'utf8')
     writeFileSync(jnTop(dir, 'preset.yml'), `name: ${id}\ndescription: ${JSON.stringify(d)}\n`, 'utf8')
     presetPaths.set(id, jnTop(dir, 'agent.cordis.yml'))
@@ -151,7 +183,7 @@ const fakeCtx = {
     composedPreset: (agentCtx) => presetByCtx.get(agentCtx),
     authorable: true,
     defaultId: 'standard',
-    roots: [{ path: presetUserRoot, trust: 'user' }],
+    roots: [{ path: shippedRoot, trust: 'shipped' }, { path: presetUserRoot, trust: 'user' }],
     list: async () => [...presetPaths.keys()].map((id) => ({
       id,
       trust: presetPaths.get(id).startsWith(presetUserRoot) ? 'user' : 'shipped',
@@ -227,6 +259,12 @@ console.log('\n--- 工具面（share 移除 / present 接入）---')
   console.log(`  ${/MC_PRESET_TOOL_GROUPS/.test(idx) && /availableToolGroups\(\)/.test(idx) ? '✅' : '❌'} 复制/重建 preset 时会补齐 MC 模式需要的工具组（tool-fs / tool-jobs / present）`)
   console.log(`  ${/const ensureToolGroupsInPreset/.test(idx) && /ensureToolGroupsInPreset\(svc, existingId\)/.test(idx) ? '✅' : '❌'} 🔴 **已存在的** preset（含本机手写那份）也会被补齐那几组（不动别的行）`)
   console.log(`  ${/这些工具包在本部署的 preset 里没人引用/.test(idx) ? '✅' : '❌'} 加组之前先探"这个部署里有没有那个包"（免得把 preset 弄挂）`)
+  // 🔴 2026-09-24（GitHub issue #1，用户 huohai2）：探针必须是**同步**的 —— 宿主
+  //    `agentPreset.list()` 是 `async`，同步 `for...of` 迭代一个 Promise 会抛 TypeError、
+  //    被 `catch` 吞掉 ⇒ 每一组都被判成"本部署没人引用"，自动建的 MC 模式**一组工具都补不上**。
+  console.log(`  ${/readdirSync\(dir, \{ withFileTypes: true \}\)/.test(idx) && /join\(dir, ent\.name, 'agent\.cordis\.yml'\)/.test(idx) ? '✅' : '❌'} 🔴 探针扫 preset 根目录（同步 readdirSync），不再迭代 async 的 list()（issue #1 根因）`)
+  console.log(`  ${!/of\s+agentPresetsSvc\?\.list\?\.\(\)/.test(idx) ? '✅' : '❌'} 🔴 没有把 async list() 丢进 for...of（旧写法必挂，且被 catch 吞成"没人引用"）`)
+  console.log(`  ${/探"本部署有哪些 preset 工具包"失败/.test(idx) && /一个随附 preset 的组成都没扫到/.test(idx) ? '✅' : '❌'} 探针失败 / 一个 preset 都没扫到时**记一行日志**（判据失效不许伪装成"确实没有"）`)
   // 发布区（用户 2026-09-17 定稿：`/api/whale-craft/express/<工作区 uuid>/…`，自己一条前缀路由）
   console.log(`  ${/const outDir = outRootOf\(memoryRootFor/.test(idx) ? '✅' : '❌'} mc_kit_image 默认输出 .whale-craft/.out/（**不对外**）`)
   console.log(`  ${/\.whale-craft\/\$\{OUT_DIR\}\/mc-map-/.test(idx) ? '✅' : '❌'} mc_map 默认也落 .out/，并支持 out: 写进发布区`)
@@ -544,7 +582,19 @@ console.log('\n--- 强制停止：UI 路径的真实顺序（停LLM → 退游�
   const fakeAgent2 = { id: 'sess-STOP', status: 'running' }
   // 这第二套 ctx 的 agents 服务要**可替换**：下面的「MC设置」接口测试需要换成"带工作区的会话"
   let agents2 = { get: () => fakeAgent2 }
-  const jobs2 = { list: () => [{ id: 'job-watch' }, { id: 'job-other' }], kill: (id) => side.push(`kill:${id}`) }
+  // 🔴 2026-09-24：快照里要**带 owner 身份**（宿主 `JobSnapshot.ownerSession`）—— 宿主
+  //    `list(caller)` 的口径是 `owner === undefined || owner.id === session`，也就是说它
+  //    **还会把"无主 job"（宿主自己起的后台任务）列出来**，而 `assertAccess()` 对无主 job 不设防。
+  //    旧代码"列出来就全杀"⇒ 点一次「强制停止」会顺手清掉跟本会话无关的宿主任务。
+  const jobs2 = {
+    list: () => [
+      { id: 'job-watch', ownerSession: 'sess-STOP' },        // 本会话：该杀
+      { id: 'job-other', ownerSession: 'sess-STOP' },        // 本会话：该杀
+      { id: 'job-host', ownerSession: undefined },           // 宿主自己的无主 job：**不许动**
+      { id: 'job-other-sess', ownerSession: 'sess-OTHER' },  // 别的会话的 job：**不许动**
+    ],
+    kill: (id) => side.push(`kill:${id}`),
+  }
   const sc2 = { cancel: ({ sessionId }) => side.push(`cancel:${sessionId}`) }
   const ctx2 = {
     logger: { info: () => {}, warn: () => {}, debug: () => {} },
@@ -584,6 +634,9 @@ console.log('\n--- 强制停止：UI 路径的真实顺序（停LLM → 退游�
   console.log(`  ${body.stoppedLLM === true && body.finalStopLLM === true ? '✅' : '❌'} 停了两遍 LLM（首 + 尾，避免状态异常）：首=${body.stoppedLLM} 尾=${body.finalStopLLM}`)
   console.log(`  ${body.kicked === true ? '✅' : '❌'} 先尝试退出游戏（bot.disconnect 被调用）：${JSON.stringify(body.quit)}`)
   console.log(`  ${body.killedJobs?.length === 2 ? '✅' : '❌'} 该会话后台任务被清空：${JSON.stringify(body.killedJobs)}`)
+  // 🔴 2026-09-24（PR #2 报的隐患）：**只准杀自己的** —— 无主 job 与别的会话的 job 一个都不许碰
+  console.log(`  ${body.killedJobs?.includes('job-watch') && body.killedJobs?.includes('job-other') ? '✅' : '❌'} 自己的两个 job 都被清掉`)
+  console.log(`  ${!body.killedJobs?.includes('job-host') && !body.killedJobs?.includes('job-other-sess') ? '✅' : '❌'} 🔴 宿主无主 job / 别的会话的 job **一个都没动**（旧代码会把它们一起杀掉）`)
   const sideWant = ['cancel:sess-STOP', 'kill:job-watch', 'kill:job-other', 'cancel:sess-STOP']
   console.log(`  ${side.join(' → ') === sideWant.join(' → ') ? '✅' : '❌'} 副作用真实顺序 = 先停LLM → 清任务 → 再停LLM：${side.join(' → ')}`)
 
@@ -1297,6 +1350,81 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     await new Promise((r) => setTimeout(r, 0))
   }
   console.log(`  ${presetCopyCalls.length === 1 ? '✅' : '❌'} 只建一次（重复触发不再复制）`)
+  /* 🔴 2026-09-24：`ensureToolGroupsInPreset()` 会动**用户自己写的** composition
+   *    （本机那份 `minecraft` 就是用户手写的），所以：
+   *      ① 动之前必须留一份**原始副本**（`agent.cordis.yml.bak-whale-craft`，只留第一次那份）；
+   *      ② 隔离实例里**一律不写**（`WHALE_CRAFT_NO_PRESET_WRITE`）—— 隔离实例的 preset 根
+   *         与生产**共用**（`~/.dsh/.agent-presets` redirect 不了），写下去就是改生产文件。
+   *         2026-09-24 实测踩到：隔离实例第一次跑就把压缩组加进了用户手写的那份。
+   *    ⚠️ 上面那条自动建的路一辈子只跑一次（`presetEnsureTried`），所以这里**另起一棵树**：
+   *    预先放一份"手写的 minecraft"（缺两组、没有自建标记），看插件会不会补、有没有留备份。 */
+  {
+    const fs = await import('node:fs')
+    const { tmpdir: td3 } = await import('node:os')
+    const { join: jn3 } = await import('node:path')
+    const HANDWRITTEN = [
+      '# 用户手写的 preset',
+      '- id: persona',
+      "  name: '@deepseek-ai/dsh-persona'",
+      '  config:',
+      '    prefix: |',
+      '      手写的人设',
+      '',
+      '- id: tool-fs',
+      "  name: '@deepseek-ai/dsh-tool-fs'",
+      '',
+    ].join('\n')
+
+    /** 起第三棵树：预置一份手写 preset（root 里只有它），返回 apply 后的那套东西 */
+    const bootWithHandwritten = async () => {
+      const root = fs.mkdtempSync(jn3(td3(), 'whale-handwritten-'))
+      const dir = jn3(root, 'minecraft')
+      fs.mkdirSync(dir, { recursive: true })
+      const compPath = jn3(dir, 'agent.cordis.yml')
+      fs.writeFileSync(compPath, HANDWRITTEN, 'utf8')
+      fs.writeFileSync(jn3(dir, 'preset.yml'), 'name: MC模式\ndescription: "手写的"\n', 'utf8')
+      const fibers = []
+      const tools3 = new Map()
+      const svc3 = {
+        composedPreset: () => undefined,
+        authorable: true,
+        defaultId: 'standard',
+        roots: [{ path: shippedRoot, trust: 'shipped' }, { path: root, trust: 'user' }],
+        list: async () => [{ id: 'minecraft', trust: 'user', path: compPath, description: '手写的' }],
+        read: async () => fs.readFileSync(compPath, 'utf8'),
+        copy: async () => { throw new Error('手写的那份已存在 → 不该走到复制') },
+      }
+      const ctx3 = {
+        logger: { info: () => {}, warn: () => {}, debug: () => {} },
+        tools: { register: (d) => { tools3.set(d.name, d); return () => {} }, guard: () => () => {} },
+        webServer: { register: () => () => {}, port: 39998 },
+        workspaceRegistry: { archiveSession: async () => {} },
+        systemPrompt: { context: () => () => {}, section: () => () => {} },
+        inject: (deps, cb) => { fibers.push({ deps, cb }) },
+        effect: (fn) => { try { fn() } catch {} },
+        on: () => () => {},
+        get: (k) => (k === 'agentPresets' ? svc3 : undefined),
+      }
+      mod.apply(ctx3, mod.Config ? mod.Config({}) : {})
+      const f = fibers.find((x) => x.deps.includes('agentPresets'))
+      if (f) f.cb({ get: (k) => (k === 'agentPresets' ? svc3 : undefined), effect: (fn) => { try { fn() } catch {} }, logger: ctx3.logger })
+      await new Promise((r) => setTimeout(r, 0))
+      return { compPath, bakPath: `${compPath}.bak-whale-craft` }
+    }
+
+    // ① 正常启动：补组 + 留原始副本
+    const one = await bootWithHandwritten()
+    const after = fs.readFileSync(one.compPath, 'utf8')
+    console.log(`  ${/dsh-tool-jobs/.test(after) && /dsh-compaction-basic/.test(after) ? '✅' : '❌'} 🔴 用户手写的 preset 缺组 → 补上（本机那份手写 preset 就是这条路）`)
+    console.log(`  ${/用户手写的 preset/.test(after) && /手写的人设/.test(after) && /dsh-tool-fs/.test(after) ? '✅' : '❌'} 手写的内容一个字节没动（只在末尾追加缺的组）`)
+    console.log(`  ${fs.existsSync(one.bakPath) && fs.readFileSync(one.bakPath, 'utf8') === HANDWRITTEN ? '✅' : '❌'} 🔴 动它之前留了**原始副本**（agent.cordis.yml.bak-whale-craft，只留第一次那份）`)
+
+    // ② 隔离模式：一个字都不写
+    process.env.WHALE_CRAFT_NO_PRESET_WRITE = '1'
+    let two
+    try { two = await bootWithHandwritten() } finally { delete process.env.WHALE_CRAFT_NO_PRESET_WRITE }
+    console.log(`  ${fs.readFileSync(two.compPath, 'utf8') === HANDWRITTEN && !fs.existsSync(two.bakPath) ? '✅' : '❌'} 🔴 隔离模式（WHALE_CRAFT_NO_PRESET_WRITE）下**不写** preset（隔离实例与生产共用 preset 根）`)
+  }
   // 🔴 用户 2026-09-16 报的 bug："MC 模式的简介变成了和极简模式一样" ——
   //    官方 copy() **只改 name、保留源 description**，所以复制完必须把 preset.yml 改回来。
   const presetMetaFile = jnTop(presetUserRoot, 'minecraft', 'preset.yml')
@@ -1314,6 +1442,12 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     console.log(`  ${!/complete: true/.test(comp) && !/includeRuntimeContext: false/.test(comp) ? '✅' : '❌'} minimal 的 complete / includeRuntimeContext 已去掉（否则会压掉其它 section）`)
     console.log(`  ${/^-\s+id:\s*persistent-shell[\s\S]{0,120}disabled: true/m.test(comp) ? '✅' : '❌'} 🔴 持久 shell 已关掉（与"本模式没有 shell"的指导一致）`)
     console.log(`  ${/id: pty/.test(comp) ? '✅' : '❌'} 其余结构原样保留（pty 组还在，只是被 disabled）`)
+    // 🔴 2026-09-24（GitHub issue #1）**端到端**：自动建出来的 preset 必须**真的**带上那几组。
+    //    这条在旧代码上必挂 —— 探针同步迭代 `async list()` → TypeError 被 catch 吞掉
+    //    → 每一组都被判成"本部署没人引用" → 这里一个包都找不到。
+    console.log(`  ${/dsh-tool-fs/.test(comp) && /dsh-tool-jobs/.test(comp) && /dsh-tool-present/.test(comp) ? '✅' : '❌'} 🔴 端到端：自动建的 preset 里**真的**补上了 tool-fs / tool-jobs / present`)
+    console.log(`  ${/dsh-compaction-basic/.test(comp) && /dsh-command-compact/.test(comp) && /dsh-compaction-tool-result-pruner/.test(comp) ? '✅' : '❌'} 🔴 端到端：压缩组也真的补上了（缺它 = 没有 /compact、也没有自动压缩）`)
+    console.log(`  ${/^- id: compaction\n  name: cordis:group\n  group: true\n  isolate:\n    compaction: true\n    toolResultPruner: true\n/m.test(comp) ? '✅' : '❌'} 压缩组是整组（不是只加一个 command-compact）`)
   }
   // 纯函数：结构不认识时要返回 null（宁可不改也不写坏 composition）
   {
@@ -1342,15 +1476,21 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     // 工具组补丁（2026-09-16：MC 模式必须有 tool-fs / tool-jobs / present —— 官方 minimal 里一个都没有）
     const mini = "- id: persona\n  name: '@deepseek-ai/dsh-persona'\n"
     const added = C.patchToolGroupsIntoComposition(mini)
-    console.log(`  ${added && C.MC_PRESET_TOOL_GROUPS.every((g) => added.includes(g.pkg)) ? '✅' : '❌'} 空壳 preset（像官方 minimal）→ 三组全补齐：${C.MC_PRESET_TOOL_GROUPS.map((g) => g.pkg.replace('@deepseek-ai/dsh-', '')).join(' / ')}`)
+    console.log(`  ${added && C.MC_PRESET_TOOL_GROUPS.every((g) => added.includes(g.pkg)) ? '✅' : '❌'} 空壳 preset（像官方 minimal）→ 各组全补齐：${C.MC_PRESET_TOOL_GROUPS.map((g) => g.pkg.replace('@deepseek-ai/dsh-', '')).join(' / ')}`)
     console.log(`  ${added && /- id: tool-jobs\n  name: '@deepseek-ai\/dsh-tool-jobs'\n/.test(added) ? '✅' : '❌'} 🔴 其中含 tool-jobs（没有它，宿主就没有 job controller → 看门狗只能降级成"无 job 模式"）`)
     console.log(`  ${added && /- id: tool-fs\n  name: '@deepseek-ai\/dsh-tool-fs'\n/.test(added) ? '✅' : '❌'} 其中含 tool-fs（文件工具；官方 minimal 没有 → 不补的话 jail/白名单全落空）`)
+    // 🔴 2026-09-24（PR #2 用户报）：压缩组**必须整组**写进去 —— 只补 `command-compact` 没用，
+    //    服务本体在 `compaction-basic`，而 `isolate` 那两个键别处根本不存在。
+    const cg = Boolean(added && /^- id: compaction$/m.test(added))
+    console.log(`  ${cg && /^\s{2}name: cordis:group$/m.test(added) && /^\s{2}group: true$/m.test(added) && /^\s{4}compaction: true$/m.test(added) && /^\s{4}toolResultPruner: true$/m.test(added) ? '✅' : '❌'} 🔴 压缩组按"整组"写入（cordis:group + group + isolate: compaction/toolResultPruner）`)
+    console.log(`  ${cg && /dsh-compaction-basic/.test(added) && /dsh-command-compact/.test(added) && /dsh-compaction-tool-result-pruner/.test(added) ? '✅' : '❌'} 压缩组三个条目齐全（压缩服务本体 + /compact 指令 + 工具结果裁剪）`)
+    console.log(`  ${cg && /thresholdChars: 8192/.test(added) && /headChars: 4096/.test(added) && /tailChars: 1024/.test(added) ? '✅' : '❌'} 裁剪参数与官方 standard 一致（8192 / 4096 / 1024）`)
     console.log(`  ${added && C.patchToolGroupsIntoComposition(added) === null ? '✅' : '❌'} 幂等：再跑一次返回 null（不会加两遍）`)
     const partial = C.patchToolGroupsIntoComposition("- id: tool-fs\n  name: '@deepseek-ai/dsh-tool-fs'\n")
     console.log(`  ${partial && (partial.match(/dsh-tool-fs/g) ?? []).length === 1 && partial.includes('dsh-tool-jobs') ? '✅' : '❌'} 已经有的那组不会被重复加（只补缺的）`)
     const oneOnly = C.patchToolGroupsIntoComposition(mini, [C.MC_PRESET_TOOL_GROUPS[0]])
     console.log(`  ${oneOnly && oneOnly.includes('dsh-tool-fs') && !oneOnly.includes('dsh-tool-jobs') ? '✅' : '❌'} 只把"部署里真的有的"那几组传进来时，只补那几组`)
-    console.log(`  ${C.MC_PRESET_SPEC === 6 ? '✅' : '❌'} 🔴 MC_PRESET_SPEC=6（升到这一版会把 5 建的 preset 重建一遍 → 顺手修好"persona 键名写坏"的老环境）`)
+    console.log(`  ${C.MC_PRESET_SPEC === 7 ? '✅' : '❌'} 🔴 MC_PRESET_SPEC=7（升到这一版会把 6 建的 preset 重建一遍 → 顺手补上压缩组）`)
   }
   // 🔴 **已经建好的**那份也要能修（用户那台测试机上就是旧版建出来的）：
   //    只在"简介恰好等于某个官方 preset 的简介"（明显是复制残留）时才动，用户自己写的不碰。
@@ -1445,6 +1585,9 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     console.log(`  ${!viaHome.includes('E:\\ws') ? '✅' : '❌'} 🔴 结果**不在工作区**里（这正是用户要的）`)
     const iso = resolveStateDir({ env: { WHALE_CRAFT_DIR: 'T:\\tmp' }, dshHomePath: () => 'C:\\x\\.dsh\\whale_craft', whaleDir: 'T:\\tmp', home: fakeHome })
     console.log(`  ${iso === 'T:\\tmp' ? '✅' : '❌'} 自检/隔离模式（WHALE_CRAFT_DIR）一切留在临时目录：${iso}`)
+    // 🔴 2026-09-24（issue #1 附带）：日志路径走 `fileURLToPath`，别用 `new URL().pathname`
+    //    （家目录含中文时会被百分号编码 → 自检在 mkdir 上 EPERM 崩掉）
+    console.log(`  ${!/%[0-9A-Fa-f]{2}/.test(String(process.env.MC_LOG)) ? '✅' : '❌'} 自检日志路径没有被百分号编码（fileURLToPath；中文/空格家目录下也能跑）：${process.env.MC_LOG}`)
     const explicit = resolveStateDir({ env: { WHALE_CRAFT_STATE_DIR: 'S:\\s', WHALE_CRAFT_DIR: 'T:\\tmp' }, whaleDir: 'T:\\tmp', home: fakeHome })
     console.log(`  ${explicit === 'S:\\s' ? '✅' : '❌'} WHALE_CRAFT_STATE_DIR 优先级最高`)
     const idx = readFileSync(new URL('./index.js', import.meta.url), 'utf8')
