@@ -77,6 +77,11 @@
   },
   "scripts": {
     "check": "node tools/check-core.mjs && node selfcheck.mjs",
+    "dev:web": "node tools/dev.mjs web",
+    "dev:desktop": "node tools/dev.mjs desktop",
+    "dev:link": "node tools/dev.mjs link",
+    "dev:status": "node tools/dev.mjs status",
+    "dev:stop": "node tools/dev.mjs stop",
     "prepublishOnly": "npm run check",
     "publish:npm": "node scripts/publish-npm.mjs",
     "release:workflow-fix": "node scripts/land-workflow-fix.mjs"
