@@ -31,9 +31,6 @@ export const PRESET_AUTH_SERVERS = [
   { id: 'littleskin', name: 'LittleSkin', url: 'https://littleskin.cn/api/yggdrasil' },
 ]
 
-/** 兼容旧名字（别的模块可能还引用） */
-export const BUILTIN_AUTH_SERVERS = PRESET_AUTH_SERVERS
-
 const FILE = 'accounts.json'
 const CRED_SCOPE = 'whale-craft'
 /** 凭据 key 的两段都要求"小写连字符标识符"，所以 innerID 只用 [a-z0-9-] */

@@ -11,7 +11,7 @@ whale_craft 是**标准 DSH 插件**（两半端）：
 | host（服务端） | `index.js` + `src/` | `package.json` → `dsh.bundle.patch: ./cordis.patch.yml`；profile 的 `dsh.profile.bundles` 里列包名即生效 |
 | client（浏览器） | `client.js` | `package.json` → `exports["./client"]`；`dsh.client.platform: "web"` |
 
-- `cordis.patch.yml` 内容就一件事：`insert: - id: whale_craft / name: whale_craft / config: {autoConnect: false}`。
+- `cordis.patch.yml` 内容就一件事：`insert: - id: whale_craft / name: whale_craft`（2026-10-02 起连 config 块也去掉了——`autoConnect` 是 0.1 时代的死配置）。
 - `index.js` 导出 `name='whale_craft'`、`inject=['webServer','tools']`、`Config`（schemastery schema）、`apply(ctx, config)`。
 - **host 半端不热重载**（装/改后要重启 DSH）；**client bundle 是 HMR 热更**的。
 - 浏览器端入口协议：`window.__ModuleLoader__.load({ id:'whale_craft', factory(require){...} })`，`apply(ctx)` 往 `slots` 注册三个插槽。

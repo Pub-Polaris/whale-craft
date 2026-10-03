@@ -7,7 +7,7 @@
 
 ## 1. `src/core.mjs` —— McBot（mineflayer 封装，不依赖 DSH）
 
-**导出**：`McBot`（default 也是它）、`Vec3`、`DEFAULTS`、`TIMEOUTS`、`DEFAULT_COMMAND_WHITELIST`、`withTimeout`、`raceAbort`、`jsonSafe`、`lossless`、`glyphOf`、`logLine`、`libraryInfo`、`sessionFlags`、`takeAuthJoinError`、`wrapYggdrasilServer`、`friendlyAuthError`。
+**导出**：`McBot`（default 也是它）、`Vec3`、`DEFAULTS`、`TIMEOUTS`、`DEFAULT_COMMAND_WHITELIST`、`withTimeout`、`raceAbort`、`lossless`、`glyphOf`、`logLine`、`libraryInfo`、`sessionFlags`、`takeAuthJoinError`、`wrapYggdrasilServer`、`friendlyAuthError`。
 
 ### 工具函数
 

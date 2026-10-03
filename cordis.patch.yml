@@ -14,5 +14,3 @@
 - insert:
     - id: whale_craft
       name: whale_craft
-      config:
-        autoConnect: false

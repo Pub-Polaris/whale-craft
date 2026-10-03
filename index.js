@@ -10,7 +10,7 @@
  *     同一个会话内只能有一个 bot 实例（一个游戏角色）。
  *  3. 🔴 **连接参数工具化**：服务器地址/端口/登录凭据/子服 全部由 mc_connect 工具
  *     运行时传参，AI 根据用户指令或记忆文件决定连哪里。Config 里不再有硬编码的
- *     服务器/凭据（旧字段保留为 fallback，逐步废弃）。
+ *     服务器/凭据（0.1 时代的遗留 fallback 字段已于 2026-10-02 清理）。
  *  4. 事件通知**只有一条通道**：`mc_watch` 后台看门狗任务（job 结算 → DSH followup
  *     唤醒**同一个会话**）。本插件**不存在**任何跨会话唤醒实现。
  *
@@ -107,21 +107,12 @@ function readJsonBody(req) {
 }
 
 /**
- * Config 只保留**行为配置**（与"连哪个服"无关）。
- * 连接参数（host/port/authUrl/authUser/authPass/subserver）已全部移到 mc_connect 工具。
- * 旧字段保留为 fallback（工具不传参时用），但默认值已清空凭据。
+ * Config = 纯**行为配置**（与"连哪个服"无关）。
+ * 连接参数全在 mc_connect 工具里；0.1 时代的遗留 fallback 字段
+ * （host/port/subserver/authUrl/authUser/authPass/autoConnect）已无人读，2026-10-02 清除。
  */
 export const Config = z.object({
-  // ── 以下为 fallback（deprecated，工具传参优先）──
-  host: z.string().default(''),
-  port: z.natural().default(25565),
-  subserver: z.string().default(''),
-  authUrl: z.string().default(''),
-  authUser: z.string().default(''),
-  authPass: z.string().default(''),
-  autoConnect: z.boolean().default(false),
-
-  // ── 行为配置（保留）──
+  // ── 行为配置 ──
   /**
    * "喊我"的触发词（正则，大小写不敏感）。聊天里命中这些词才算在叫我。
    *
@@ -135,10 +126,6 @@ export const Config = z.object({
     'deepseek', 'deep\\s*seek', '\\bds\\b', '\\bdsh\\b', '\\bai\\b', 'agent',
     '机器人', '麦块',
   ]),
-  /** 聊天是否必须命中触发词才算叫我（默认 true：避免公屏闲聊把我叫醒） */
-  chatMentionOnly: z.boolean().default(true),
-  /** 受攻击/低血是否算作"叫我"（默认 true；看门狗可按次覆盖） */
-  damageCountsAsCall: z.boolean().default(true),
 })
 
 

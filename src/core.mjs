@@ -294,41 +294,6 @@ function abortError (label, signal) {
 }
 
 /**
- * 把 mineflayer 的返回值转成"无损 JSON"。
- * ⚠️ 血的教训（2026-09-14）：工具输出里只要混进 Vec3 实例，DSH 就会报
- *    `tool "mc_status" returned invalid output: value is not lossless JSON`
- *    —— 表现就是"新会话里工具用不了"。所有对外返回都要过这个函数。
- */
-export function jsonSafe (value, depth = 0) {
-  if (depth > 12) return null
-  if (value === null || value === undefined) return null
-  const t = typeof value
-  if (t === 'string' || t === 'boolean') return value
-  if (t === 'number') return Number.isFinite(value) ? value : null
-  if (t === 'bigint') return Number(value)
-  if (t === 'function' || t === 'symbol') return null
-  // Vec3 / 坐标对象 → 纯对象
-  if (typeof value.x === 'number' && typeof value.y === 'number' && typeof value.z === 'number'
-      && (value.constructor?.name === 'Vec3' || value.constructor?.name === 'Vector3' || value.floored !== undefined || value.offset !== undefined)) {
-    return { x: value.x, y: value.y, z: value.z }
-  }
-  if (Array.isArray(value)) return value.map((v) => jsonSafe(v, depth + 1))
-  if (value instanceof Map) { const o = {}; for (const [k, v] of value) o[String(k)] = jsonSafe(v, depth + 1); return o }
-  if (value instanceof Set) return [...value].map((v) => jsonSafe(v, depth + 1))
-  if (value instanceof Date) return value.toISOString()
-  if (Buffer.isBuffer(value)) return `<buffer ${value.length}B>`
-  if (t === 'object') {
-    const out = {}
-    for (const [k, v] of Object.entries(value)) {
-      const safe = jsonSafe(v, depth + 1)
-      if (safe !== null || v === null) out[k] = safe
-    }
-    return out
-  }
-  return null
-}
-
-/**
  * 把任意值压成**无损 JSON**，用于工具返回值（宿主会校验，不合格直接报
  * 「value is not lossless JSON」）。
  *
@@ -631,12 +596,7 @@ export class McBot extends EventEmitter {
    * @param {string|false} [opts.version] - 协议版本（默认 false=自动探测）
    * @param {Object} [opts.auth] - 上面的账户描述符（**唯一**的凭据入口）
    */
-  async connect (optsOrSub = {}, legacyOpts = {}) {
-    // 兼容旧签名 connect('mc.example.com')
-    const opts = typeof optsOrSub === 'string'
-      ? { subserver: optsOrSub, ...legacyOpts }
-      : { ...optsOrSub }
-
+  async connect (opts = {}) {
     const host    = opts.host      || this.cfg.host      || DEFAULTS.host
     const port    = Number(opts.port ?? this.cfg.port ?? DEFAULTS.port)
     const sub     = opts.subserver || this.cfg.subserver || DEFAULTS.subserver || ''
