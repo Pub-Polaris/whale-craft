@@ -67,7 +67,7 @@ DSH host 进程
 - `connect({host, port, subserver, version, auth, onAuth})`：`auth` 是唯一凭据入口（`{mode:'offline'|'yggdrasil',...}`，绝不出现在返回值）；版本默认自动探测；**顶号**（"already connected"且建连 <9s）最多重试 4 次；失败**保留原连接**。
 - 自动重连：延迟 5s 起、失败翻倍上限 60s、成功复位；`offline` 事件在 `b.on('end')` 里 emit，payload `{sub, reason, willReconnect, at}`。
 - 事件：`spawn / offline / reconnect / death / damage / chat / system` + 观察器 `playerJoin / playerLeave / teleport / pushed / pickup`（后三类默认只留档，见看门狗矩阵）。`chat` 的识别覆盖 signed（`player_chat` 包）、unsigned、**以及被服务端塞进 system 位置的玩家聊天**（`#playerChatFrom` 兜底正则 `/^\s*<who>\s*text$/`）。
-- **协议护栏**：发任何可选包之前先 `#supportsPacket(version, name)` 查该版本的 `minecraft-data` 协议表（带缓存）；`player_input` 只在该版本真有时才发（1.21/1.21.1 没有它，硬发会被服务端当 `accept_teleportation` 解码 → 秒踢，见 [history.md](history.md)）。
+- **按键上报层已移除（2026-10-02）**：原先为 26.2 加的 `player_input` 兼容层（含"先查后发"护栏）整体撤掉——上游还连不了 26.2（mineflayer 4.39.0 只到 26.1；minecraft-data 3.117.0 只有元数据、无数据目录）。将来重建的注意事项见 [history.md](history.md)（D1 / F10）。
 - 不变量：所有可能永不 settle 的 await 经 `#t()`（`withTimeout`+`raceAbort` 包裹）——超时/中断会松掉全部控制位；`placeBlock`/`breakBlock` **必须复验 `blockAt` 才报成功**（报假成功是历史教训）。
 
 ## 5. 事件 → 唤醒链路（"该不该醒" vs "发生过什么"）

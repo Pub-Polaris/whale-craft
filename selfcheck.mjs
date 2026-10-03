@@ -1090,7 +1090,7 @@ console.log('\n--- status：服务器地址 ---')
 {
   const { McBot } = await import('./src/core.mjs')
   const b = new McBot({ instanceId: 'sc-status-' + Math.random().toString(36).slice(2, 7) })
-  b._connectionProfile = { host: 'example.com', port: 25566, subserver: 'mc.example.com', version: '26.2', authMode: 'offline', account: '<user>' }
+  b._connectionProfile = { host: 'example.com', port: 25566, subserver: 'mc.example.com', version: '1.21.4', authMode: 'offline', account: '<user>' }
   const offline = b.status()
   console.log(`  ${offline.online === false && offline.connection?.host === 'example.com' && offline.connection?.port === 25566 && offline.connection?.subserver === 'mc.example.com' ? '✅' : '❌'} 离线时也给地址（host/port/subserver）：${JSON.stringify(offline.connection ?? null)}`)
   console.log(`  ${!/account|authMode|version/.test(JSON.stringify(offline.connection ?? {})) ? '✅' : '❌'} 🔴 地址里**不带账号/认证模式**（凭据绝不外流）`)
@@ -2570,39 +2570,16 @@ console.log('\n--- 认证请求 URL（真机 bug 回归）---')
     console.log(`  ${/Yggdrasil Connect/.test(coreSrc) && /缺 agent 直接回 \*\*400\*\*/.test(coreSrc) ? '✅' : '❌'} 代码里留了这条事故的说明（免得后人又把 agent 删掉）`)
   }
 
-  // ── 协议护栏：版本里没有的包**绝不能发**（2026-09-19 事故）──
-  // 别人反馈：连 1.21.1 进服成功、1 秒后被踢，服务端报
-  //   `Failed to decode packet 'serverbound/minecraft:accept_teleportation'`。
-  // 根因：1.21/1.21.1（协议 767）**没有 player_input 包**，而我们的按键兼容层无条件发它；
-  //   protodef 对**未知包名不报错**，写出的是「id=0x00 + 空 body」（实测字节 `02 00 00`），
-  //   服务端把 id 0x00 当成 accept_teleportation，去读 teleportId 时没字节 → 踢人。
-  // 修法：发之前先查这个版本的协议数据（`#supportsPacket`）。本地用**真官方 1.21.1 服务端**
-  //   复现过：修前 1 秒被踢、修后稳坐 8 秒不掉线，且 player_input 一次都没发。
+  // ── 按键上报兼容层（player_input，为 26.2 加的）已整体移除（2026-10-02 用户决策）──
+  // 原因：上游还连不了 26.2——mineflayer 4.39.0 的 testedVersions 只到 26.1；minecraft-data
+  //   3.117.0 只收了 26.2 的**元数据**、没有数据目录（`minecraft-data('26.2')` 为 null）。
+  //   半吊子支持先撤；将来上游真支持 26.2，再按 CHANGELOG 0.1.7 的方案（先查后发）重建。
   {
     const { McBot } = await import('./src/core.mjs')
-    const fakeBot = (version) => {
-      const writes = []
-      const client = { ended: false, write: (n) => { writes.push(n) } }
-      const bot = new McBot({ instanceId: 'selftest-proto' })
-      bot.bot = { version, _client: client, entity: {}, controlState: {} }
-      return { bot, writes }
-    }
-    // ①1.21.1 没有这个包 → 一个都不许发
-    const a = fakeBot('1.21.1')
-    a.bot.startInputPackets()
-    await new Promise((r) => setTimeout(r, 200))
-    a.bot.stopInputPackets()
-    console.log(`  ${a.writes.length === 0 ? '✅' : '❌'} 🔴 1.21.1（协议 767，没有 player_input）→ 一个包都不发（实际 ${a.writes.length} 个）`)
-    // ②26.2 有 → 必须照发（别把 26.2 的修复弄坏）
-    const b = fakeBot('26.2')
-    b.bot.startInputPackets()
-    await new Promise((r) => setTimeout(r, 200))
-    b.bot.stopInputPackets()
-    console.log(`  ${b.writes.includes('player_input') && b.writes.length >= 2 ? '✅' : '❌'} 26.2（有这个包）→ 正常发（${b.writes.length} 次 / 200ms）`)
-    // ③源码里必须留着"先查后发"
     const coreSrc2 = (await import('node:fs')).readFileSync(new URL('./src/core.mjs', import.meta.url), 'utf8')
-    const guarded = /#supportsPacket \(version, name\)/.test(coreSrc2) && /if \(!this\.#supportsPacket\(version, 'player_input'\)\)/.test(coreSrc2)
-    console.log(`  ${guarded ? '✅' : '❌'} 🔴 源码里带"发之前先查该版本有没有这个包"的护栏（删掉就会复发）`)
+    // 只看**代码**，不看注释：注释里留着"为什么删 / 怎么重建"的说明（那是要留的）
+    const protoCode = coreSrc2.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+    console.log(`  ${!/player_input|inputPacket|startInputPackets|stopInputPackets|_packetSupport/.test(protoCode) ? '✅' : '❌'} 🔴 按键上报兼容层已移除（26.2 尚无上游数据；残代码会让人误以为 26.2 能用）`)
 
     // ── 幽灵在线：socket 结束就不算在线 ──
     const g = new McBot({ instanceId: 'selftest-ghost' })

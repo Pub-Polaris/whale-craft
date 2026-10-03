@@ -21,7 +21,7 @@
 
 ### McBot 类
 
-- 构造：`{...config, instanceId}`；字段含 `bot/sub/connecting/connectedAt/lastError/autoReconnect/reconnectDelay/reconnecting/reconnectPending/chat/inputTimer/stopped/lastTimeout/abortSignal/stats{connects,deaths,chats,lastEventAt,timeouts}`。
+- 构造：`{...config, instanceId}`；字段含 `bot/sub/connecting/connectedAt/lastError/autoReconnect/reconnectDelay/reconnecting/reconnectPending/chat/stopped/lastTimeout/abortSignal/stats{connects,deaths,chats,lastEventAt,timeouts}`。
 - **`online` getter** = `bot.entity 存在 && _client.ended !== true` —— 幽灵在线的判据（见下）。
 - `connect(opts)`：参数 `{host, port, subserver, version, auth, onAuth}`；`auth` 是**唯一凭据入口**（`{mode:'offline'|'yggdrasil', username, password?, server?...}`），绝不出现在任何返回值。细节：
   - 已在线且同 sub+host → 直接返回；并发 connecting → 等同一个 promise；
@@ -29,11 +29,11 @@
   - yggdrasil 才设 `sessionServer`；`fakeHost: sub` 过 HAProxy 子服路由；等 spawn 超时 `connectTimeoutMs`（45s）。
 - **重连**：延迟 5s 起、失败翻倍上限 60s、成功复位；`reconnecting` 只覆盖两次尝试间窗口，`reconnectPending` 覆盖**整个断线期**（直到真重连成功/手动 connect 成功）。
 - **`offline` 事件**（`b.on('end')` 里 emit）：`{sub, reason: lastError ?? '连接结束', willReconnect, at}`；`willReconnect = autoReconnect && bot===b && !stopped`。**断线必须进上层队列**（0.1.7 修）。
-- `disconnect(reason)`：停重连/输入/观察器 → `quit()` 宽限 3s（计时器故意不 unref）→ 没走掉才强断；返回 `{graceful,forced,ms}`。`authOnly()`：只认证不连接（账户 refresh 用）。
+- `disconnect(reason)`：停重连/观察器 → `quit()` 宽限 3s（计时器故意不 unref）→ 没走掉才强断；返回 `{graceful,forced,ms}`。`authOnly()`：只认证不连接（账户 refresh 用）。
 - **事件清单**：`spawn {sub,position,gamemode}`、`offline`、`reconnect {sub}`、`death {position}`、`damage {health,position}`（health≤6）、`chat {who,text}`（不含自己；1.5s 同人同文去重）、`system {text}`、观察器 `playerJoin/playerLeave {who}`、`teleport`（>24 格/秒）、`pushed`（≥2 格且非自移）、`pickup {items}`、`log`。
   - ⚠️ **core 没有 `heartbeat` 事件** —— 心跳是看门狗配置项，靠 `stats.lastEventAt` 判。
 - **聊天识别**（`wireChatEvents`/`#playerChatFrom`）：`player_chat` 包（签名）直接处理；`message` 事件里 `position==='chat'` 跳过防重复；`game_info` 必 system；其余先试玩家聊天判据（`chat.type.text` / `chat.type.team.*` / `commands.message.display.incoming` / 兜底渲染形状正则 `<who> text`）——覆盖"被服务端塞进 system 位置的玩家聊天"。
-- **协议护栏**：`#supportsPacket(version, name)` 查 `minecraft-data(version).protocol.play.toServer.types['packet_'+name]`（Map 缓存）。`player_input`（20Hz 按键上报）只在该版本真有时才发，每 tick 复查（重连可能换版本）。**红线**：protodef 对未知包名**不报错**、写出 `02 00 00`（id=0x00 空 body），会被服务端当 `accept_teleportation` 解 → 抛 DecoderException 秒踢（1.21/1.21.1 事故）。
+- **按键上报兼容层（`player_input`，为 26.2 加的）已于 2026-10-02 整体移除**：上游还连不了 26.2（mineflayer 4.39.0 的 testedVersions 只到 26.1；minecraft-data 3.117.0 只有元数据、无数据目录），半吊子支持先撤。将来重建**必须**沿用"先查后发"护栏——教训见 [history.md](history.md)（protodef 对未知包名不报错，写出 `02 00 00` 会被服务端当 `accept_teleportation` → 秒踢）。
 - **动作方法**（全部经 `#t()` 超时包装，超时/中断自动松 7 个控制位）：`walkTo`（arrive 1.6、|dy|≤1.5、一直按 forward、1.2s 无进展跳）、`flyTo`（仅创造，finally 必 `stopFlying` 恢复重力）、`dig`（自动换收割工具）、`placeBlock`（判据链：选块→缺货自动给→距离>5.5 直接抛"够不着"→目标必须 `canPlaceInto`（boundingBox 'empty'，水/岩浆/草花可放）→ 找 6 邻域参照→**复验 `blockAt` 才报 placed**）、`breakBlock`（复验 `now!==name` 才报 broken）、`build`、`giveItem`（协议级 `creative.setInventorySlot`）、`clearInventory`、`useBlock`、`attack`、`tossItem`、`runSequence`（≤64 步，见工具表）、`command`（必须 `/` 开头，带 allow 回调）、`chatSay`。
 - **观察**：`scan` / `heightmap`（R≤96）/ `mapImage`（RGBA，白框标自己）/ `entities` / `inventory` / `waitForChunks`（默认 20s；`blockAt` 脚下出现即算到）/ `status()`（含 ghost 特判）/ `connectionView()`（只出 host/port/subserver，不带账号）。
 - **错误纪律**：`#reportError` 是唯一错误上报口 —— 记 lastError+日志，**仅在有 listener 时才 emit('error')**（EventEmitter 无监听者 emit('error') 会 throw，曾把整个 DSH 带走）。

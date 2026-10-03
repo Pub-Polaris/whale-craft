@@ -1,6 +1,6 @@
 // -*- coding: utf-8 -*-
 /**
- * whale_craft / core.mjs —— Minecraft 26.2 无头机器人核心（不依赖 DSH，可独立运行与测试）
+ * whale_craft / core.mjs —— Minecraft 无头机器人核心（不依赖 DSH，可独立运行与测试）
  * ---------------------------------------------------------------------------
  * 从 mc-bridge/server.mjs 抽出来：连接/保活/世界读取/移动/挖掘/事件分发。
  * 供两处使用：
@@ -14,7 +14,6 @@
  *   - auth 传函数时必须自己 options.connect(client)
  *   - spawn 早于区块下发，读世界前要 waitForChunks
  *   - 给 mineflayer 传坐标一律用真 Vec3
- *   - 26.2 服务端要 player_input 包上报按键（mineflayer 不发）→ 本模块自己补
  *   - 走路必须"一直按住"前进键
  */
 import mineflayer from 'mineflayer'
@@ -142,7 +141,6 @@ export const DEFAULTS = {
   connectTimeoutMs: 45_000,
   moveBudgetMs: 40_000,
   chatHistory: 300,
-  inputPacket: process.env.MC_INPUT_PACKET !== '0',
   /**
    * 日志落盘位置。🔴 **默认不写插件包目录**（装进 `node_modules/` 后那可能是只读的、
    * 升级时也会被覆盖）：默认写 `$DSH_HOME/whale_craft/logs/`，可用 `MC_LOG` 覆盖。
@@ -206,8 +204,8 @@ export function logLine (...args) {
  * 🔴 超时保护 —— "对话卡在生成中、停止键也按不动"的根因修复（2026-09-15）
  * ----------------------------------------------------------------------------
  * mineflayer 的 dig / placeBlock / equip / lookAt / creative.flyTo 返回的都是
- * "**等服务端 ack**" 的 promise。26.2 支持不完整时（我们得当伸手进 _client 补
- * player_input，就是证据）服务端可能根本不回包 → promise 永不 settle
+ * "**等服务端 ack**" 的 promise。服务端可能根本不回包（版本对不上、支持不完整
+ * 时尤其如此）→ promise 永不 settle
  * → 工具 execute 永不返回 → 整轮 turn 卡死：
  *     前端一直"生成中" · 停止键无效（没有中断点） · 无法插话
  * 症状表现为"LLM 也停止输出了"——其实模型早调完工具在等结果，是工具卡住了。
@@ -433,11 +431,9 @@ export class McBot extends EventEmitter {
     /** 断线期（从掉线一直置到**真重连成功**）：前端据此显示"重连中…"，见 end 处理里的说明 */
     this.reconnectPending = false
     this.chat = []            // { at, kind, who, text }
-    this.inputTimer = null
     this.stopped = false
     this.lastTimeout = null
     this.abortSignal = null       // 本轮 turn 的 abort signal（工具层注入）
-    this._packetSupport = new Map()  // `版本/包名 → 该版本协议里有没有这个包`（见 #supportsPacket）
     this.observerTimer = null     // 世界观察器（语义事件）
     this._obs = null
     this._selfMovingAt = 0        // 我们自己发起移动的时刻（排除"被传送"误判）
@@ -731,7 +727,6 @@ export class McBot extends EventEmitter {
         //    以前这里只写日志：于是"被踢之后 mc_status 还说在线、看门狗还挂着、AI 以为还在游戏里"。
         const willReconnect = Boolean(this.autoReconnect && this.bot === b && !this.stopped)
         this.log('连接结束', r ?? '')
-        this.stopInputPackets()
         // 「断线期」标记：一直置到**真重连成功**为止。
         // why：`reconnecting` 只在"两次尝试之间的等待窗口"为真，一旦开始尝试连接（最长 45s）它就变 false——
         //      只看它的话，状态条在那 45 秒里会从"重连中…"退回"未上线"，看着像插件放弃了。
@@ -774,7 +769,6 @@ export class McBot extends EventEmitter {
       this.stats.connects++
       this.autoReconnect = true
       this.reconnectPending = false      // 进来了就算"断线期"结束（手动 mc_connect 也算）
-      this.startInputPackets()
       this.startObserver()
       this.writeLock()
       this.log(`已进入 ${sub} @ (${this.position?.x},${this.position?.y},${this.position?.z}) gamemode=${b.game?.gameMode}`)
@@ -812,7 +806,7 @@ export class McBot extends EventEmitter {
   /**
    * 下线。**先优雅退出，真走不掉才强断**（用户 2026-09-16 要求："一定要先尝试退出游戏"）。
    *
-   *   ① 先关掉自动重连 / 输入上报 / 世界观察器 —— 否则退服事件会把看门狗又吵醒
+   *   ① 先关掉自动重连 / 世界观察器 —— 否则退服事件会把看门狗又吵醒
    *   ② `bot.quit(reason)` 发正常的断开包，给它 graceMs（默认 3s）自己走完
    *   ③ 还没走掉才 `_client.end()` 强断（兜底，不允许吊死）
    *
@@ -823,7 +817,6 @@ export class McBot extends EventEmitter {
     const t0 = Date.now()
     this.stopped = true
     this.autoReconnect = false
-    this.stopInputPackets()
     this.stopObserver()
 
     const b = this.bot
@@ -996,68 +989,17 @@ export class McBot extends EventEmitter {
     return session
   }
 
-  /**
-   * 这个版本的协议数据里有没有这个 **serverbound** 包？
+  /* ───────────── 按键上报兼容层（player_input）——已整体移除（2026-10-02 用户决策） ─────────────
+   * 它原本为 26.2 而加（20Hz 上报按键位，mineflayer 不发）。移除原因：上游还连不了 26.2——
+   * mineflayer 4.39.0 的 testedVersions 只到 26.1；minecraft-data 3.117.0 只收了 26.2 的
+   * **元数据**、没有数据目录（`minecraft-data('26.2')` 为 null）。半吊子支持先撤，等上游真支持
+   * 26.2 再重建。
    *
-   * 🔴 为什么必须有这道检查：protodef **对未知包名不报错**，而是写出「id=0x00 + 空 body」——
-   *    服务端会把它当成自己注册表里 id 0x00 的那个包去解，于是报出一个**与我们真正发的包毫无关系**
-   *    的错误名（2026-09-19：1.21.1 上误发 player_input → 服务端报 accept_teleportation 解不开 → 踢人）。
-   *    所以**任何版本相关的包都必须先查后发**。
-   * @param {string} version mineflayer 报的版本字符串（如 `1.21.1` / `26.2`）
-   * @param {string} name    包名（不带 `packet_` 前缀）
-   */
-  #supportsPacket (version, name) {
-    const key = `${version ?? '?'}/${name}`
-    if (this._packetSupport.has(key)) return this._packetSupport.get(key)
-    let ok = false
-    try {
-      const data = requireFromMineflayer('minecraft-data')(version)
-      ok = Boolean(data?.protocol?.play?.toServer?.types?.[`packet_${name}`])
-    } catch { ok = false }                 // 数据里没这个版本 / 解析不了 → 当作不支持
-    this._packetSupport.set(key, ok)
-    return ok
-  }
-
-  /** 26.2 必须：20Hz 上报按键位（位名是 shift 不是 sneak）。
-   *
-   * 🔴 **只在"这个版本真有 `player_input` 包"时才发**（2026-09-19 事故，别人反馈 + 本地真 1.21.1 复现）：
-   *    `minecraft-protocol` 的 protodef **遇到未知包名不报错**，它会写出 `[len=2][0][0x00]`
-   *    —— 也就是「包 id = 0x00、body 为空」。服务端把 id 0x00 当成它自己的
-   *    `accept_teleportation`（1.21.x 里确认传送就是 0x00），去读 teleportId 时没有字节 ⇒
-   *      `io.netty.handler.codec.DecoderException: Failed to decode packet 'serverbound/minecraft:accept_teleportation'`
-   *    ⇒ **立刻踢人**。现象极具迷惑性：进服完全成功、1 秒后掉线，错误却指向"确认传送"。
-   *    实测：**1.21 / 1.21.1（协议 767）没有 `player_input`**；1.21.3+（含 26.2）才有。
-   *    （所以那次只报 1.21.1 掉线、26.2 一切正常 —— 不是版本兼容性玄学，是包不存在。）
-   */
-  startInputPackets () {
-    if (!this.cfg.inputPacket || this.inputTimer) return
-    const version = this.bot?.version
-    if (!this.#supportsPacket(version, 'player_input')) {
-      this.log(`按键上报兼容层不启用：${version ?? '未知版本'} 的协议里没有 player_input 包（1.21/1.21.1 没有，1.21.3+ 才有）`)
-      return
-    }
-    this.inputTimer = setInterval(() => {
-      const b = this.bot
-      if (!b?._client || b._client.ended) return
-      // 重连可能换了版本：每次都按当前版本再确认一遍（结果有缓存，不贵）
-      if (!this.#supportsPacket(b.version, 'player_input')) { this.stopInputPackets(); return }
-      const cs = b.controlState ?? {}
-      try {
-        b._client.write('player_input', {
-          inputs: {
-            forward: Boolean(cs.forward), backward: Boolean(cs.back),
-            left: Boolean(cs.left), right: Boolean(cs.right),
-            jump: Boolean(cs.jump), shift: Boolean(cs.sneak), sprint: Boolean(cs.sprint),
-          },
-        })
-      } catch (e) { this.log('player_input 失败，停用兼容层：' + e.message); this.stopInputPackets() }
-    }, 50)
-    this.inputTimer.unref?.()
-  }
-
-  stopInputPackets () {
-    if (this.inputTimer) { clearInterval(this.inputTimer); this.inputTimer = null }
-  }
+   * 将来重建**必须**沿用"先查后发"：protodef 对未知包名**不报错**，写出「id=0x00 + 空 body」
+   * （实测字节 `02 00 00`），服务端会把 id 0x00 当成自己的 `accept_teleportation` 去读
+   * teleportId —— 没有字节 ⇒ DecoderException ⇒ 秒踢（2026-09-19 只报 1.21.1 掉线的根因；
+   * 现象极迷惑：进服完全成功、1 秒后掉线，错误却指向"确认传送"，详见 CHANGELOG 0.1.7）。
+   * ─────────────────────────────────────────────────────────────────────────────────────── */
 
   /* ───────────── 单实例锁（按实例分文件：同进程多会话不能共用一把锁） ───────────── */
 

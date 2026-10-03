@@ -1497,7 +1497,7 @@ export function apply(ctx, config) {
       port:      { type: 'number', description: '端口（默认 25565）' },
       subserver: { type: 'string', description: '子服域名（Velocity fakeHost 路由，如 mc.example.com）' },
       account:   { type: 'string', description: '（可选）用哪个账户：innerID（mc_accounts 里能看到）；不传就用本会话选定的/默认账户' },
-      version:   { type: 'string', description: 'MC 版本（如 1.20.4 / 26.2）。**默认不传 = 自动探测**（发 STATUS ping 按服务端上报的协议号反查），这是推荐用法；只有探测失败时才手填。' },
+      version:   { type: 'string', description: 'MC 版本（如 1.20.4 / 1.21.4）。**默认不传 = 自动探测**（发 STATUS ping 按服务端上报的协议号反查），这是推荐用法；只有探测失败时才手填。' },
     },
     output: text(),
     async execute(args, exec) {
