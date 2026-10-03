@@ -21,7 +21,9 @@ whale_craft 是**标准 DSH 插件**（两半端）：
 ```
 DSH host 进程
 └─ index.js apply(ctx, config)
-   ├─ PluginConfig          $DSH_HOME/whale_craft/config.json（热生效）
+   ├─ PluginConfig          $DSH_HOME/whale_craft/config.json（全局，热生效）
+   ├─ wsconfig（src）        <记忆根>/config.json 按工作区的配置（提示词三开关 + 版本标记；迁移/建档）
+   ├─ protected（src）       RULES.md / AGENTS.md / config.json 的"可读不可写"统一判定
    ├─ AccountStore          $DSH_HOME/whale_craft/accounts.json + 宿主凭据服务（密码/token）
    ├─ McRegistry            agentId → McSession
    │   └─ McSession         McBot + events[]（≤200 条）+ Watchdog + selectedAccount
@@ -95,7 +97,7 @@ DSH host 进程
 
 **本插件不往系统提示词里塞任何东西**。注入 = 往会话投"插件提示行"，共 4 条内容：
 
-| 顺序 | 内容 | 开关（默认） |
+| 顺序 | 内容 | 开关（默认；前两个**按工作区**，存 `<工作区>/.whale-craft/config.json`） |
 | --- | --- | --- |
 | 1 | 工作区根 `AGENTS.md`（宿主原生文件，插件再补一份） | `injectWorkspaceAgentsMd`（关） |
 | 2 | `.whale-craft/RULES.md`：行事准则（称呼/记忆/看门狗/登服/聊天/建筑/硬规矩） | `injectWhaleCraftAgentsMd`（开） |
@@ -106,7 +108,7 @@ DSH host 进程
 - **去重三层**：① 台账 `noticeLedger`（指纹 `preset|PLUGIN_VERSION`）；② 会话日志回读 `deliveredRelsFor`（找 `source.plugin==='whale_craft' && form==='notice'` 的历史消息）；③ `inbox` 队列同名检查。
 - **切出 MC 模式**时 `withdrawAgentsMdNotices`：清队列 + 清台账 + 划 `since` 时间线。
 - **为什么叫 RULES.md 不叫 AGENTS.md**：DSH 会把 `AGENTS.md`/`CLAUDE.md` 当工作区指令自动注入任何碰过该目录的会话（不受插件开关控制）。改名的效果 = 注入只剩插件这一条通道、且只对 MC 模式生效。老文件自动迁移进 `RULES.md`，原文件改名 `AGENTS.md.bak-<时间>`（内容不丢、宿主不再认）。
-- **AI 不能读写 RULES.md**（文件工具 guard + `MemoryStore.safePath` 两条路都堵）。`rulesFollowVersion`（默认开）靠 `.rules-version` 标记在新版本时整体替换；首次见到无标记只记版本不覆盖。
+- **受保护文件对 AI 只读**（RULES.md / AGENTS.md / config.json；文件工具 guard + `MemoryStore` 写方法两条路，判定统一在 `src/protected.mjs`）。`rulesFollowVersion`（默认开，**按工作区**）靠 config.json 的 `rulesVersion` 字段在新版本时整体替换；首次见到无记录只记版本不覆盖。旧工作区单独的 `.rules-version` 标记会在"备好记忆目录"时机迁入 config.json 并删除（迁移见 `src/wsconfig.mjs`）。
 - **消息构造**走 `src/user-message.mjs`：宿主 `@deepseek-ai/dsh-llm` 的 `createUserMessage` 优先、拿不到用自带等价实现 —— 因为该包曾漏进依赖声明，导致"工具都在、提示词全无"（详见 [history.md](history.md)）。
 
 ## 7. MC 模式与权限隔离（双保险）
@@ -114,7 +116,7 @@ DSH host 进程
 判据 `isMcModeAgent`：`agentPresets.composedPreset` ∈ `mcModePresets`（默认 `['minecraft','whale_craft']`）。
 
 1. **`tools.restrict({allow})`**（无条件白名单）：`mc_*`（按 `hideAdminTools` 去掉 `mc_admin_*`）+ `mc_kit_*` + 文件工具（`read/write/edit/glob/grep/read_image`）+ `present` + `mcMode.allowOtherTools`。宿主的 `pwsh/subagent/workflow/serve_*` 一个都看不见。⚠️ 只能**收窄** —— 不能凭空添加 preset 没挂的工具（宿主报错里 `known global tools:` 可直接解析）；`restrict` 是**黏性**的，切换靠 disposer。
-2. **`guard`**（服务端硬拒，`index.js` apply 内注册）：① `mc_admin_*` 硬拒；② 文件类工具参数命中凭据路径（`.credentials`/`credentials.yaml`/`/.dsh/`）、`/secrets/`、`isAgentsMdPath`（RULES/AGENTS.md）→ 硬拒；③ 文件工具路径必须落在 `<工作区>/.whale-craft/` 内，**空路径也算越界**；④ `present` 的文件路径必须在会话工作区内。
+2. **`guard`**（服务端硬拒，`index.js` apply 内注册）：① `mc_admin_*` 硬拒；② 文件类工具参数命中凭据路径（`.credentials`/`credentials.yaml`/`/.dsh/`）、`/secrets/` → 硬拒（读写都不行）；③ **受保护文件**（`src/protected.mjs`：RULES.md / AGENTS.md / config.json）**可读不可写** —— `write|edit` 与记忆工具写动作命中即拒，读类工具放行（判定 = 路径写法命中 或 解析到记忆根后正好是该文件）；④ 文件工具路径必须落在 `<工作区>/.whale-craft/` 内，**空路径也算越界**；⑤ `present` 的文件路径必须在会话工作区内。
 3. **无工作区 → 整体拒绝**：会话没选工作区时，**不套隔离、不注入、不建记忆目录**；「MC设置」API 400 并说明原因（`noWorkspaceRefused`）。
 4. 模式切换触发点：`agent/created`、`agent/session-start`、`agent-preset/selected` 三个钩子里双向对账（进套用/出撤销）；`liftMcModePolicy` 撤销时要**撤回提示行**（漏撤回曾是"标准模式没 pwsh"的事故）。
 
@@ -144,7 +146,7 @@ DSH host 进程
 | POST `/api/mc/stop` | 强制停止（`cancelTurn: true`） |
 | `/api/mc/accounts`（GET/POST/PATCH/DELETE）+ `/accounts/refresh` | 账户 CRUD / 改名 / 探测刷新（`probeBot.authOnly`） |
 | `/api/mc/authservers`（POST/DELETE） | 认证服务器增删（`parseAuthlibCard` 解析卡片） |
-| `/api/mc/config`（GET/PATCH） | 全局配置读写 |
+| `/api/mc/config`（GET/PATCH） | 配置读写（**分流**：全局键 → PluginConfig；提示词三开关 → 该工作区的 config.json） |
 | `/api/mc/agents-md`（GET/PUT/DELETE） | RULES.md 读/写/恢复默认 |
 | `/api/mc/express`（GET/DELETE） | 分享状态 / 「清除分享数据」 |
 | GET/HEAD `/api/whale-craft/express/<工作区uuid>/<相对路径>` | 发布区文件（仅 online 模式） |
@@ -176,7 +178,8 @@ DSH host 进程
 | --- | --- |
 | 全局配置 / 账户元数据 / 日志 / 会话锁 | `$DSH_HOME/whale_craft/`（`config.json` / `accounts.json` / `logs/whale-craft.log` / `.instance.<会话>.json`） |
 | 凭据（password/token） | 宿主凭据服务 `$DSH_HOME/.credentials.yaml`（key=`whale-craft/<innerID>`；**绝不降级写明文**） |
-| 记忆 / 行事准则 / 输出 / 发布区 | `<会话工作区>/.whale-craft/`（`README.md` / `RULES.md` / `.rules-version` / `.out/` / `.express/`） |
+| 记忆 / 行事准则 / 输出 / 发布区 | `<会话工作区>/.whale-craft/`（`README.md` / `RULES.md` / `config.json` / `.out/` / `.express/`） |
+| 按工作区的配置（提示词三开关 + 版本标记） | `<会话工作区>/.whale-craft/config.json`（旧版单独的 `.rules-version` 标记会迁入并删除） |
 | 调试实例的一切 | `.dev/home/`（隔离 DSH_HOME，gitignored） |
 
 环境变量阀门：`MC_LOG`（日志路径）、`DSH_HOME`、`WHALE_CRAFT_DIR` / `WHALE_CRAFT_STATE_DIR`（自检/隔离用状态目录）、`WHALE_CRAFT_MEMORY_DIR`（记忆目录，供自检/调试隔离）、`WHALE_CRAFT_NO_PRESET_WRITE`（禁止写 preset）。

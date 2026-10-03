@@ -273,7 +273,8 @@ console.log('\n--- 工具面（share 移除 / present 接入）---')
   console.log(`  ${!/serveExpressFile/.test(idx) && !/knownWorkspaces/.test(idx) ? '✅' : '❌'} 🔴 旧的"目录名 + 进程内见过的工作区集合"那套已删干净`)
   console.log(`  ${/realpathSync\(target\)/.test(idx) && /拒绝越界（符号链接）/.test(idx) ? '✅' : '❌'} 🔴 防穿透：段级校验 + realpath 复查（符号链接也跳不出去）`)
   // 「随版本更新」（用户 2026-09-17）：在"备好记忆目录"那两个时机执行，版本变了才替换
-  console.log(`  ${/syncRulesVersion\(root, PLUGIN_VERSION, \{ follow: pluginConfig\.get\('rulesFollowVersion'\) !== false \}\)/.test(idx) ? '✅' : '❌'} 🔴 「随版本更新」挂在"备好记忆目录"时机上（follow 来自配置，默认开）`)
+  console.log(`  ${/syncRulesVersion\(root, PLUGIN_VERSION, \{ follow: workspaceConfigValues\(root\)\.rulesFollowVersion !== false \}\)/.test(idx) ? '✅' : '❌'} 🔴 「随版本更新」挂在"备好记忆目录"时机上（follow 来自**本工作区** config.json，默认开）`)
+  console.log(`  ${/migrateWorkspaceConfig\(root, \{ seed: pluginConfig\.legacyPromptSwitches\(\) \}\)/.test(idx) ? '✅' : '❌'} 🔴 建档/迁移（旧 .rules-version 并入 config.json）**先于**版本同步（否则旧值这轮看不到）`)
   console.log(`  ${/行事准则已替换为新版本默认内容/.test(idx) ? '✅' : '❌'} 真替换时会写一行日志（便于排查"我的准则怎么变了"）`)
   console.log(`  ${!/read_image \{file_path/.test(codeOnly) && !/present \{files/.test(codeOnly) ? '✅' : '❌'} 🔴 旧的"用 read_image / present 发图"提示已清干净（注释里的历史说明不算）`)
   const vp = readFileSync(new URL('./src/version-prompt.mjs', import.meta.url), 'utf8')
@@ -644,12 +645,14 @@ console.log('\n--- 强制停止：UI 路径的真实顺序（停LLM → 退游�
   // 🔴 2026-09-16：这组接口现在**必须有带工作区的 sessionId**（用户："没有选中工作区就拒绝设置"）。
   //    造一个带工作区的会话，下面所有设置调用都自动带上它。
   const apiWs = (await import('node:fs')).mkdtempSync((await import('node:path')).join((await import('node:os')).tmpdir(), 'whale-apiws-'))
+  const apiWs2 = (await import('node:fs')).mkdtempSync((await import('node:path')).join((await import('node:os')).tmpdir(), 'whale-apiws2-'))
   const apiAgent = { id: 'sess-API', session: { header: { cwd: apiWs } } }
-  agents2 = { get: (id) => (id === 'sess-API' ? apiAgent : undefined) }   // ⚠️ 这是**第二套** ctx 的服务（route2 属于它）
-  const callApi = async (method, url, payload) => {
+  const apiAgent2 = { id: 'sess-API2', session: { header: { cwd: apiWs2 } } }
+  agents2 = { get: (id) => (id === 'sess-API' ? apiAgent : id === 'sess-API2' ? apiAgent2 : undefined) }   // ⚠️ 这是**第二套** ctx 的服务（route2 属于它）
+  const callApi = async (method, url, payload, sid = 'sess-API') => {
     const rq = new EventEmitter()
     rq.method = method
-    rq.url = url + (url.includes('?') ? '&' : '?') + 'sessionId=sess-API'
+    rq.url = url + (url.includes('?') ? '&' : '?') + `sessionId=${sid}`
     rq.headers = { host: '127.0.0.1:39999' }
     const rs = { writeHead: () => {}, end: (b) => { rs.body = String(b ?? '') } }
     const p = route2.handler(rq, rs)
@@ -698,7 +701,38 @@ console.log('\n--- 强制停止：UI 路径的真实顺序（停LLM → 退游�
   const cfgFollow = await callApi('PATCH', '/api/mc/config', { rulesFollowVersion: false })
   const md3 = await callApi('GET', '/api/mc/agents-md')
   console.log(`  ${cfgFollow.ok && cfgFollow.rulesFollowVersion === false && md3.followVersion === false ? '✅' : '❌'} PATCH 能关掉「随版本更新」（配置里记着，页面也读得到）`)
-  await callApi('PATCH', '/api/mc/config', { rulesFollowVersion: true })
+  // 🔴 2026-10-03：三个提示词开关**按工作区**存（<工作区>/.whale-craft/config.json），不再写全局
+  // ⚠️ 自检默认把 WHALE_CRAFT_MEMORY_DIR 指向全局临时目录——这里临时摘掉，
+  //    让记忆根（连同 config.json）跟着**会话工作区**走（真机就是这么配的）
+  {
+    const { readFileSync: rf } = await import('node:fs')
+    const { join: jn } = await import('node:path')
+    const savedMem = process.env.WHALE_CRAFT_MEMORY_DIR
+    delete process.env.WHALE_CRAFT_MEMORY_DIR
+    try {
+      const cfgFollowA = await callApi('PATCH', '/api/mc/config', { rulesFollowVersion: false })
+      const cfgApi2 = await callApi('GET', '/api/mc/config')
+      const wsCfgFile = jn(apiWs, '.whale-craft', 'config.json')
+      let wsCfgRaw = null
+      try { wsCfgRaw = JSON.parse(rf(wsCfgFile, 'utf8')) } catch { wsCfgRaw = null }
+      console.log(`  ${cfgFollowA.ok && wsCfgRaw?.rulesFollowVersion === false && wsCfgRaw?.schema === 1 ? '✅' : '❌'} 🔴 开关落在**本工作区**的 .whale-craft/config.json（schema:1 + rulesFollowVersion:false）`)
+      console.log(`  ${cfgApi2.workspaceConfigFile === wsCfgFile && cfgApi2.rulesFollowVersion === false ? '✅' : '❌'} 配置接口报出工作区配置文件路径并回读新值（${String(cfgApi2.workspaceConfigFile)}）`)
+      const globalRaw = (() => { try { return JSON.parse(rf(cfgApi2.configFile, 'utf8')) } catch { return {} } })()
+      console.log(`  ${globalRaw.rulesFollowVersion === undefined && globalRaw.injectWorkspaceAgentsMd === undefined ? '✅' : '❌'} 🔴 全局 config.json 里不再写这三个键（只留迁移 seed 语义）`)
+      const cfgFollow2 = await callApi('PATCH', '/api/mc/config', { rulesFollowVersion: true, injectWorkspaceAgentsMd: true }, 'sess-API2')
+      const mdWs1 = await callApi('GET', '/api/mc/agents-md')
+      const mdWs2 = await callApi('GET', '/api/mc/agents-md', undefined, 'sess-API2')
+      console.log(`  ${cfgFollow2.ok && cfgFollow2.injectWorkspaceAgentsMd === true && mdWs1.followVersion === false && mdWs2.followVersion === true ? '✅' : '❌'} 🔴 两个工作区互不影响（A 关随版本更新 / B 开 + 额外注入工作区 AGENTS.md）`)
+      let wsCfgA2 = null
+      let wsCfgB = null
+      try { wsCfgA2 = JSON.parse(rf(wsCfgFile, 'utf8')) } catch {}
+      try { wsCfgB = JSON.parse(rf(jn(apiWs2, '.whale-craft', 'config.json'), 'utf8')) } catch {}
+      console.log(`  ${wsCfgB?.injectWorkspaceAgentsMd === true && wsCfgA2?.injectWorkspaceAgentsMd === undefined ? '✅' : '❌'} 🔴 B 的注入开关没有串到 A（文件级隔离）`)
+    } finally {
+      if (savedMem === undefined) delete process.env.WHALE_CRAFT_MEMORY_DIR
+      else process.env.WHALE_CRAFT_MEMORY_DIR = savedMem
+    }
+  }
   const mdPut = await callApi('PUT', '/api/mc/agents-md', { text: '# 自检临时准则' })
   const md1 = await callApi('GET', '/api/mc/agents-md')
   console.log(`  ${mdPut.ok && md1.source === 'custom' && /自检临时准则/.test(md1.text) ? '✅' : '❌'} PUT 保存自定义准则后立刻生效`)
@@ -1684,18 +1718,35 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
   const otherTool = guards.map((g) => { try { return g({ name: 'mc_status', agent: { id: 'sess-MC', ctx: mcCtxObj } }) } catch { return undefined } }).find(Boolean)
   console.log(`  ${otherTool === undefined ? '✅' : '❌'} guard 只管管理工具，不影响 mc_status 等游戏工具`)
 
-  // guard 硬化：MC 模式不许用文件工具绕去读凭据 / 读 AGENTS.md / 碰记忆文件夹以外的任何文件
-  const credRead = guards.map((g) => { try { return g({ name: 'read', arguments: { path: 'C:\\Users\\x\\.dsh\\.credentials.yaml' }, agent: { id: 'sess-MC', ctx: mcCtxObj } }) } catch { return undefined } }).find(Boolean)
-  console.log(`  ${credRead ? '✅' : '❌'} MC 模式读 .credentials.yaml 被 guard 拒绝：${String(credRead).slice(0, 28)}`)
-  const secretsRead = guards.map((g) => { try { return g({ name: 'read', arguments: { path: 'E:\\x\\.agent-docs\\secrets\\example.md' }, agent: { id: 'sess-MC', ctx: mcCtxObj } }) } catch { return undefined } }).find(Boolean)
-  console.log(`  ${secretsRead ? '✅' : '❌'} MC 模式读 secrets/ 明文凭据备忘也被拒：${String(secretsRead).slice(0, 28)}`)
-  const mdRead = guards.map((g) => { try { return g({ name: 'read', arguments: { path: 'E:\\x\\.whale-craft\\AGENTS.md' }, agent: { id: 'sess-MC', ctx: mcCtxObj } }) } catch { return undefined } }).find(Boolean)
-  console.log(`  ${mdRead ? '✅' : '❌'} MC 模式读 AGENTS.md 被 guard 拒绝：${String(mdRead).slice(0, 28)}`)
-  const mdViaMemory = guards.map((g) => { try { return g({ name: 'mc_kit_memory', arguments: { action: 'read', path: 'AGENTS.md' }, agent: { id: 'sess-MC', ctx: mcCtxObj } }) } catch { return undefined } }).find(Boolean)
-  console.log(`  ${mdViaMemory ? '✅' : '❌'} 记忆工具绕路读 AGENTS.md 也被拒`)
-  // 🔴 用户 2026-09-16："读写文件都只能在记忆文件夹内！"
+  // guard 硬化：MC 模式不许用文件工具绕去读凭据 / 碰记忆文件夹以外的任何文件；
+  // 受保护文件（RULES.md / AGENTS.md / config.json）**可读不可写**（用户 2026-10-03 定）
   const memRoot = String(process.env.WHALE_CRAFT_MEMORY_DIR)
   const callGuard = (spec) => guards.map((g) => { try { return g(spec) } catch { return undefined } }).find(Boolean)
+  const mcGuardAgent = { id: 'sess-MC', ctx: mcCtxObj }
+  const credRead = callGuard({ name: 'read', arguments: { path: 'C:\\Users\\x\\.dsh\\.credentials.yaml' }, agent: mcGuardAgent })
+  console.log(`  ${credRead ? '✅' : '❌'} MC 模式读 .credentials.yaml 被 guard 拒绝：${String(credRead).slice(0, 28)}`)
+  const secretsRead = callGuard({ name: 'read', arguments: { path: 'E:\\x\\.agent-docs\\secrets\\example.md' }, agent: mcGuardAgent })
+  console.log(`  ${secretsRead ? '✅' : '❌'} MC 模式读 secrets/ 明文凭据备忘也被拒：${String(secretsRead).slice(0, 28)}`)
+  const mdRead = callGuard({ name: 'read', arguments: { path: 'RULES.md' }, agent: mcGuardAgent })
+  console.log(`  ${mdRead === undefined ? '✅' : '❌'} 🔴 受保护文件 RULES.md **可读**（guard 放行 —— 可读不可写）`)
+  const mdViaMemoryRead = callGuard({ name: 'mc_kit_memory', arguments: { action: 'read', path: 'AGENTS.md' }, agent: mcGuardAgent })
+  console.log(`  ${mdViaMemoryRead === undefined ? '✅' : '❌'} 记忆工具读 AGENTS.md 也放行（读路径统一放行）`)
+  const protectedWrites = [
+    ['write', { path: 'RULES.md', content: '改' }],
+    ['write', { path: 'AGENTS.md', content: '改' }],
+    ['edit', { path: 'config.json' }],
+    ['edit', { path: join(memRoot, 'config.json') }],
+    ['mc_kit_memory', { action: 'append', path: 'config.json', text: 'x' }],
+    ['mc_kit_memory', { action: 'write', path: 'RULES.md', content: 'x' }],
+    ['mc_kit_memory', { action: 'delete', path: 'AGENTS.md' }],
+    ['mc_kit_memory', { action: 'put', path: 'config.json', source: 'x' }],
+  ]
+  const missedWrites = protectedWrites.filter(([name, args]) => callGuard({ name, arguments: args, agent: mcGuardAgent }) === undefined)
+  console.log(`  ${missedWrites.length === 0 ? '✅' : '❌'} 🔴 受保护文件的各种写法**写全被拒**（${protectedWrites.length - missedWrites.length}/${protectedWrites.length}）：${missedWrites.map(([n]) => n).join(', ') || '无漏网'}`)
+  const nestedOk = callGuard({ name: 'mc_kit_memory', arguments: { action: 'write', path: '_global/config.json', content: 'x' }, agent: mcGuardAgent }) === undefined
+    && callGuard({ name: 'write', arguments: { path: '_global/config.json', content: 'x' }, agent: mcGuardAgent }) === undefined
+  console.log(`  ${nestedOk ? '✅' : '❌'} 嵌套的普通记忆文件（_global/config.json）不受影响，照常可写`)
+  // 🔴 用户 2026-09-16："读写文件都只能在记忆文件夹内！"
   const jail = [
     ['read', { path: 'E:\\x\\README.md' }],                                  // 工作区里、但不在记忆夹
     ['write', { path: 'E:\\x\\notes.md', content: 'x' }],
@@ -2088,6 +2139,10 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     console.log(`  ${existsSync(wsReadme) ? '✅' : '❌'} README.md 不存在则写入默认骨架`)
     const seeded = existsSync(wsAgents) ? readFileSync(wsAgents, 'utf8') : ''
     console.log(`  ${/Whale Craft 行事准则/.test(seeded) && /mc_capabilities/.test(seeded) ? '✅' : '❌'} 建出来的 RULES.md = 内置默认全文（${seeded.length} 字）`)
+    // 🔴 2026-10-03：同一时机也备好工作区 config.json（schema:1 + 版本同步落进去）
+    const wsCfgPath0 = join(wsRoot, 'config.json')
+    const wsCfg0 = existsSync(wsCfgPath0) ? JSON.parse(readFileSync(wsCfgPath0, 'utf8')) : null
+    console.log(`  ${wsCfg0?.schema === 1 && typeof wsCfg0.rulesVersion === 'string' && wsCfg0.rulesVersion.length > 0 ? '✅' : '❌'} 🔴 同时建出工作区 config.json（schema:1 + rulesVersion=当前版本）`)
     writeFileSync(wsAgents, 'Master 手工改过的内容\n', 'utf8')
     fire('agent/session-start', seedAgent)
     console.log(`  ${/Master 手工改过的内容/.test(readFileSync(wsAgents, 'utf8')) ? '✅' : '❌'} 已存在的 RULES.md 不会被初始化覆盖`)
@@ -2101,6 +2156,40 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
       .map((c) => c.text ?? '').join('')
     console.log(`  ${existsSync(wsAgents) ? '✅' : '❌'} 投递时发现文件不在 → **重建**了文件`)
     console.log(`  ${/Whale Craft 行事准则/.test(rebuiltBody) ? '✅' : '❌'} 同时投递默认全文（${rebuiltBody.length} 字）—— 不允许"要求注入却什么都没有"`)
+
+    // 🔴 2026-10-03 迁移走完整 ensure 流程：旧 `.rules-version` 并入 config.json 后删除；
+    //    版本=当前（from==to）时不动 RULES.md（版本不同要替换的语义由上面的单元用例覆盖）
+    {
+      const { mkdirSync, renameSync } = await import('node:fs')
+      const wsMig = mkdtempSync(join(tmpdir(), 'whale-wsmig-'))
+      mkdirSync(join(wsMig, '.whale-craft'), { recursive: true })
+      writeFileSync(join(wsMig, '.whale-craft', 'RULES.md'), '# 老工作区自定义准则\n', 'utf8')
+      const curVer = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version
+      writeFileSync(join(wsMig, '.whale-craft', '.rules-version'), curVer + '\n', 'utf8')
+      const migAgent = { id: 'sess-MIG', session: mkSession2(wsMig), ctx: makeAgentCtx('minecraft'), inbox: mkInbox() }
+      fire('agent/created', migAgent)
+      const migCfg = JSON.parse(readFileSync(join(wsMig, '.whale-craft', 'config.json'), 'utf8'))
+      console.log(`  ${migCfg.rulesVersion === curVer && !existsSync(join(wsMig, '.whale-craft', '.rules-version')) ? '✅' : '❌'} 🔴 旧 .rules-version 已迁入 config.json 并删除（完整 ensure 流程）`)
+      console.log(`  ${/老工作区自定义准则/.test(readFileSync(join(wsMig, '.whale-craft', 'RULES.md'), 'utf8')) ? '✅' : '❌'} 版本一致 → 迁移不动既有 RULES.md`)
+
+      // 🔴 migrateWorkspaceState 判别：按工作区的**新格式** config.json 不该被当 ≤0.3.x 遗留搬走
+      const stateCfg = join(process.env.WHALE_CRAFT_DIR, 'config.json')
+      const stateBak = stateCfg + '.selfcheck-bak'
+      const hadState = existsSync(stateCfg)
+      if (hadState) renameSync(stateCfg, stateBak)      // 制造"stateDir 还没有全局配置"的条件（遗留判定才可能触发）
+      try {
+        const wsNew = mkdtempSync(join(tmpdir(), 'whale-mignew-'))
+        mkdirSync(join(wsNew, '.whale-craft'), { recursive: true })
+        writeFileSync(join(wsNew, '.whale-craft', 'config.json'), '{"schema":1,"rulesVersion":"9.0.0"}\n', 'utf8')
+        const newAgent = { id: 'sess-MIGNEW', session: mkSession2(wsNew), ctx: makeAgentCtx('minecraft'), inbox: mkInbox() }
+        fire('agent/created', newAgent)
+        const notMoved = existsSync(join(wsNew, '.whale-craft', 'config.json')) && !existsSync(stateCfg)
+        console.log(`  ${notMoved ? '✅' : '❌'} 🔴 新格式的工作区 config.json 不会被打扫遗留的迁移搬走（防再犯：它在旧逻辑下会被搬空）`)
+      } finally {
+        if (hadState) renameSync(stateBak, stateCfg)
+        else { try { const { unlinkSync: ul } = await import('node:fs'); ul(stateCfg) } catch { /* 没被误建 */ } }
+      }
+    }
 
     // 🔴 用户 2026-09-16 改的**时机**：不是"启动时对每个会话建"，而是
     //    ① 首次发起 MC 模式会话 ② 点开「MC设置」——**别的时候（比如普通会话）不许建**。
@@ -2200,6 +2289,7 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
   const okCfg = await callMc2('GET', '/api/mc/config?sessionId=sess-WSOK')
   console.log(`  ${okCfg.json?.ok === true ? '✅' : '❌'} 有工作区 → 设置接口放行`)
   console.log(`  ${(await import('node:fs')).existsSync((await import('node:path')).join(ws3, '.whale-craft', 'RULES.md')) ? '✅' : '❌'} 🔴 **点开设置**这个时机就把该工作区的 .whale-craft/RULES.md 备好了`)
+  console.log(`  ${(await import('node:fs')).existsSync((await import('node:path')).join(ws3, '.whale-craft', 'config.json')) ? '✅' : '❌'} 🔴 工作区 config.json 也在这个时机备好（两个时机 = 首次 MC 会话 / 点开设置）`)
 
   // 🔴 2026-09-16 真机反馈："新对话还没开始（服务端还没这个会话），可工作区明明选了"——
   //    所以允许客户端**直接报工作区**（只认绝对路径 + 真实存在的目录）。
@@ -2319,7 +2409,7 @@ console.log('\n--- MC账户：账户库 / 凭据隔离 / 工具 ---')
 // ── 行事准则 RULES.md / 新开关 / 边界信息工具 ──
 console.log('\n--- 行事准则 RULES.md / 新开关 / 边界信息 ---')
 {
-  const { DEFAULT_AGENTS_MD, agentsMdPath, readAgentsMd, writeAgentsMd, resetAgentsMd, isAgentsMdPath } = await import('./src/agentsmd.mjs')
+  const { DEFAULT_AGENTS_MD, agentsMdPath, readAgentsMd, writeAgentsMd, resetAgentsMd } = await import('./src/agentsmd.mjs')
   const { mkdtempSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
@@ -2370,7 +2460,13 @@ console.log('\n--- 行事准则 RULES.md / 新开关 / 边界信息 ---')
   console.log(`  ${readAgentsMd(dir).source === 'custom' ? '✅' : '❌'} 改过内容 → 算"自定义版"`)
   const tooBig = await Promise.resolve().then(() => writeAgentsMd(dir, 'x'.repeat(200 * 1024))).catch((e) => e.message)
   console.log(`  ${/太大/.test(String(tooBig)) ? '✅' : '❌'} 超大内容被拒`)
-  console.log(`  ${isAgentsMdPath('E:\\x\\.whale-craft\\AGENTS.md') && isAgentsMdPath('E:/x/whale_craft/AGENTS.md') && !isAgentsMdPath('E:/x/README.md') ? '✅' : '❌'} isAgentsMdPath 认得本文件、不误伤别的`)
+  // 受保护文件的统一判定（src/protected.mjs）：RULES.md / AGENTS.md / config.json
+  {
+    const { isProtectedPathArg, isProtectedName } = await import('./src/protected.mjs')
+    console.log(`  ${isProtectedPathArg('E:\\x\\.whale-craft\\AGENTS.md') && isProtectedPathArg('E:/x/whale_craft/RULES.md') && isProtectedPathArg('config.json') && !isProtectedPathArg('E:/x/README.md') ? '✅' : '❌'} 受保护判定认得本文件（含老名/裸名/config.json）、不误伤别的`)
+    console.log(`  ${isProtectedName('RULES.md') && isProtectedName('Config.JSON') && isProtectedName('agents.md') && !isProtectedName('_global') ? '✅' : '❌'} 受保护文件名大小写不敏感`)
+    console.log(`  ${!isProtectedPathArg('_global/config.json') && !isProtectedPathArg('notes/RULES.md') && !isProtectedPathArg('') ? '✅' : '❌'} 嵌套的记忆文件（_global/config.json）不算受保护，照常可读写`)
+  }
 
   /* 🔴 改名（2026-09-16 致命 bug）：行事准则从 `.whale-craft/AGENTS.md` → `.whale-craft/RULES.md`。
    *    原因：宿主的 agent-instructions 把 `AGENTS.md` 当候选指令文件 —— 任何会话只要 read/write/edit 过
@@ -2380,7 +2476,8 @@ console.log('\n--- 行事准则 RULES.md / 新开关 / 边界信息 ---')
     const { mkdtempSync: mkTmp, writeFileSync: writeTmp, existsSync: ex, readFileSync: rd } = await import('node:fs')
     const { tmpdir: td } = await import('node:os')
     const { join: jn } = await import('node:path')
-    const { agentsMdPath: aPath, legacyAgentsMdPath: lPath, migrateLegacyAgentsMd, isAgentsMdPath: isIt } = await import('./src/agentsmd.mjs')
+    const { agentsMdPath: aPath, legacyAgentsMdPath: lPath, migrateLegacyAgentsMd } = await import('./src/agentsmd.mjs')
+    const { isProtectedPathArg: isIt } = await import('./src/protected.mjs')
 
     console.log(`  ${aPath('/d').endsWith('RULES.md') && !aPath('/d').endsWith('AGENTS.md') ? '✅' : '❌'} 存储文件名是 RULES.md：${aPath('/d')}`)
     console.log(`  ${isIt('E:/x/.whale-craft/RULES.md') && isIt('E:\\x\\.whale-craft\\RULES.md') && isIt('RULES.md') ? '✅' : '❌'} 守卫认得新名字（绝对/Windows/裸名）`)
@@ -2408,21 +2505,25 @@ console.log('\n--- 行事准则 RULES.md / 新开关 / 边界信息 ---')
   }
 
   /* ── 「随版本更新」（用户 2026-09-17）────────────────────────────────────────
-   * 插件版本一变 → 用新版本默认准则替换 `.whale-craft/RULES.md`；靠 `.rules-version` 标记判断。
-   * 默认**开**；第一次遇到这个功能（没标记）只记版本不覆盖；关着时也只记版本（以后打开不翻旧账）。 */
+   * 插件版本一变 → 用新版本默认准则替换 `.whale-craft/RULES.md`；
+   * 版本记在本工作区的 config.json（`rulesVersion` 字段）。
+   * 默认**开**；第一次遇到（没记录）只记版本不覆盖；关着时也只记版本（以后打开不翻旧账）。 */
   {
-    const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } = await import('node:fs')
+    const { mkdtempSync, writeFileSync, readFileSync, existsSync } = await import('node:fs')
     const { tmpdir } = await import('node:os')
     const { join } = await import('node:path')
-    const { syncRulesVersion, readRulesVersion, rulesVersionPath, agentsMdPath, DEFAULT_AGENTS_MD } = await import('./src/agentsmd.mjs')
+    const { syncRulesVersion, agentsMdPath, DEFAULT_AGENTS_MD } = await import('./src/agentsmd.mjs')
+    const { readRulesVersion, setRulesVersion, wsConfigPath } = await import('./src/wsconfig.mjs')
     const mk = () => mkdtempSync(join(tmpdir(), 'whale-rules-ver-'))
     const rd = (d) => { try { return readFileSync(agentsMdPath(d), 'utf8') } catch { return '' } }
 
-    // ① 没文件 → 建默认 + 记版本
+    // ① 没文件 → 建默认 + 记版本（版本落进 config.json）
     const a = mk()
     const r1 = syncRulesVersion(a, '1.2.3')
     console.log(`  ${r1.action === 'created' && rd(a).trim() === DEFAULT_AGENTS_MD.trim() && readRulesVersion(a) === '1.2.3' ? '✅' : '❌'} 没文件 → 写默认 + 记版本（${r1.action}）`)
-    console.log(`  ${rulesVersionPath(a).endsWith('.rules-version') ? '✅' : '❌'} 标记文件是点开头的 .rules-version（不进记忆索引）`)
+    const cfgA = JSON.parse(readFileSync(wsConfigPath(a), 'utf8'))
+    console.log(`  ${cfgA.schema === 1 && cfgA.rulesVersion === '1.2.3' ? '✅' : '❌'} 版本记在工作区 config.json 的 rulesVersion 字段（schema:1）`)
+    console.log(`  ${!existsSync(join(a, '.rules-version')) ? '✅' : '❌'} 不再产生 .rules-version 独立标记文件`)
 
     // ② 版本没变 → 什么都不做
     const r2 = syncRulesVersion(a, '1.2.3')
@@ -2431,27 +2532,56 @@ console.log('\n--- 行事准则 RULES.md / 新开关 / 边界信息 ---')
     // ③ 版本变了 + 开关开（默认）→ **替换**成新默认（用户改过的也换）
     const b = mk()
     writeFileSync(agentsMdPath(b), '# 我自己改过的准则\n', 'utf8')
-    writeFileSync(rulesVersionPath(b), '0.1.0\n', 'utf8')
+    setRulesVersion(b, '0.1.0')
     const r3 = syncRulesVersion(b, '0.1.1')
     console.log(`  ${r3.action === 'replaced' && r3.from === '0.1.0' && r3.to === '0.1.1' && rd(b).trim() === DEFAULT_AGENTS_MD.trim() ? '✅' : '❌'} 🔴 版本变了 + 开关开 → 用新默认**替换**（from=${r3.from} → ${r3.to}）`)
-    console.log(`  ${readRulesVersion(b) === '0.1.1' ? '✅' : '❌'} 替换后标记更新到新版本`)
+    console.log(`  ${readRulesVersion(b) === '0.1.1' ? '✅' : '❌'} 替换后版本记录更新到新版本`)
 
     // ④ 版本变了但开关关 → 只记版本，内容原样
     const c = mk()
     writeFileSync(agentsMdPath(c), '# 我自己改过的准则\n', 'utf8')
-    writeFileSync(rulesVersionPath(c), '0.1.0\n', 'utf8')
+    setRulesVersion(c, '0.1.0')
     const r4 = syncRulesVersion(c, '0.1.1', { follow: false })
-    console.log(`  ${r4.action === 'kept' && rd(c).includes('我自己改过的') && readRulesVersion(c) === '0.1.1' ? '✅' : '❌'} 开关关 → 保留用户内容，只把标记推到当前版本（以后打开**不翻旧账**）`)
+    console.log(`  ${r4.action === 'kept' && rd(c).includes('我自己改过的') && readRulesVersion(c) === '0.1.1' ? '✅' : '❌'} 开关关 → 保留用户内容，只把版本推到当前（以后打开**不翻旧账**）`)
     const r5 = syncRulesVersion(c, '0.1.1', { follow: true })
     console.log(`  ${r5.action === 'kept' && rd(c).includes('我自己改过的') ? '✅' : '❌'} 紧接着打开开关：同一版本内**不会**再覆盖`)
 
-    // ⑤ 第一次遇到这个功能（有文件、没标记）→ 只记版本，**不覆盖**
+    // ⑤ 第一次遇到（有文件、没版本记录）→ 只记版本，**不覆盖**
     const d = mk()
     writeFileSync(agentsMdPath(d), '# 老工作区里的自定义准则\n', 'utf8')
     const r6 = syncRulesVersion(d, '0.1.1')
-    console.log(`  ${r6.action === 'marked' && r6.from === null && rd(d).includes('老工作区里的自定义准则') && readRulesVersion(d) === '0.1.1' ? '✅' : '❌'} 🔴 第一次遇到（没标记）→ 只记版本、**不覆盖**（免得插件一升级就冲掉人家改的准则）`)
+    console.log(`  ${r6.action === 'marked' && r6.from === null && rd(d).includes('老工作区里的自定义准则') && readRulesVersion(d) === '0.1.1' ? '✅' : '❌'} 🔴 第一次遇到（没记录）→ 只记版本、**不覆盖**（免得插件一升级就冲掉人家改的准则）`)
     const r7 = syncRulesVersion(d, '0.2.0')
     console.log(`  ${r7.action === 'replaced' && rd(d).trim() === DEFAULT_AGENTS_MD.trim() ? '✅' : '❌'} 之后再更新版本 → 正常替换`)
+
+    /* ── 迁移 + 建档（src/wsconfig.mjs）：旧 .rules-version 并入 config.json 后删除 ── */
+    const { migrate: migrateWs, load: wsLoad, patch: wsPatch } = await import('./src/wsconfig.mjs')
+    const e = mk()
+    writeFileSync(join(e, '.rules-version'), '0.0.9\n', 'utf8')
+    const mg1 = migrateWs(e, { seed: { injectWorkspaceAgentsMd: true, rulesFollowVersion: false } })
+    const cfgE = JSON.parse(readFileSync(wsConfigPath(e), 'utf8'))
+    console.log(`  ${mg1.created && cfgE.rulesVersion === '0.0.9' && !existsSync(join(e, '.rules-version')) ? '✅' : '❌'} 🔴 建档迁移：旧 .rules-version 的值并入 config.json，旧文件删除`)
+    console.log(`  ${cfgE.injectWorkspaceAgentsMd === true && cfgE.rulesFollowVersion === false && cfgE.injectWhaleCraftAgentsMd === undefined ? '✅' : '❌'} seed 只写**显式设过**的旧全局值（没设过的不落盘，走默认）`)
+    // seed 的来源：旧全局 config.json 里"用户显式设过"的那几个键（坏值不取）
+    {
+      const { PluginConfig } = await import('./src/config.mjs')
+      const hDir = mk()
+      writeFileSync(join(hDir, 'config.json'), '{"injectWorkspaceAgentsMd":true,"rulesFollowVersion":false,"rulesFollowVersionX":1,"injectWhaleCraftAgentsMd":"yes"}\n', 'utf8')
+      const legacySw = new PluginConfig(hDir).legacyPromptSwitches()
+      console.log(`  ${legacySw.injectWorkspaceAgentsMd === true && legacySw.rulesFollowVersion === false && !('injectWhaleCraftAgentsMd' in legacySw) && !('rulesFollowVersionX' in legacySw) ? '✅' : '❌'} 旧全局值快照只取显式设过且类型合法的三键（seed 来源：不吃错值/别的键）`)
+    }
+    const mg2 = migrateWs(e, { seed: { injectWorkspaceAgentsMd: false } })
+    console.log(`  ${!mg2.created && !mg2.markerRemoved && wsLoad(e).values.injectWorkspaceAgentsMd === true ? '✅' : '❌'} 迁移幂等：二次调用不重建、不吃掉已有值`)
+    console.log(`  ${wsLoad(e).values.rulesFollowVersion === false && wsLoad(e).values.injectWhaleCraftAgentsMd === true ? '✅' : '❌'} 缺省键按默认值补齐（config.json 里没写也算生效）`)
+    const f = mk()
+    writeFileSync(join(f, 'config.json'), '{"schema":1,"rulesVersion":"1.0.0","未来的键":"保留"}\n', 'utf8')
+    wsPatch(f, { rulesFollowVersion: false })
+    const cfgF = JSON.parse(readFileSync(join(f, 'config.json'), 'utf8'))
+    console.log(`  ${cfgF.rulesVersion === '1.0.0' && cfgF['未来的键'] === '保留' ? '✅' : '❌'} patch 保留 rulesVersion 与未知键（前向兼容，不吞数据）`)
+    const g = mk()
+    writeFileSync(join(g, 'config.json'), '{坏 JSON', 'utf8')
+    const badPatch = (() => { try { wsPatch(g, { rulesFollowVersion: false }); return null } catch (err) { return err.message } })()
+    console.log(`  ${badPatch && /未写入/.test(badPatch) && readFileSync(join(g, 'config.json'), 'utf8') === '{坏 JSON' ? '✅' : '❌'} 🔴 坏 JSON = 只读不写：patch 拒绝覆盖、原文件一字不动`)
   }
 
   // 开关：允许所有指令
@@ -2463,13 +2593,12 @@ console.log('\n--- 行事准则 RULES.md / 新开关 / 边界信息 ---')
   await tools.get('mc_admin_config').execute({ action: 'reset' }, A)
   const afterReset = await tools.get('mc_admin_config').execute({ action: 'get', path: 'allowAllCommands' }, A)
   console.log(`  ${afterReset.value === false ? '✅' : '❌'} 默认关（reset 后为 false）`)
-  const wsDefault = await tools.get('mc_admin_config').execute({ action: 'get', path: 'injectWorkspaceAgentsMd' }, A)
-  const wcDefault = await tools.get('mc_admin_config').execute({ action: 'get', path: 'injectWhaleCraftAgentsMd' }, A)
-  console.log(`  ${wsDefault.value === false && wcDefault.value === true ? '✅' : '❌'} 注入默认：whale-craft 开、工作区关`)
-  const followDefault = await tools.get('mc_admin_config').execute({ action: 'get', path: 'rulesFollowVersion' }, A)
-  console.log(`  ${followDefault.value === true ? '✅' : '❌'} 🔴 「随版本更新」默认**开**（rulesFollowVersion=true）`)
-  const badFollow = await tools.get('mc_admin_config').execute({ action: 'set', path: 'rulesFollowVersion', value: 'yes' }, A).catch((e) => e.message)
-  console.log(`  ${/必须是 true\/false/.test(String(badFollow)) ? '✅' : '❌'} 开关类型校验（rulesFollowVersion）`)
+  // 🔴 2026-10-03：三个提示词开关下放为**按工作区**后，全局管理工具不再认识它们（报未知配置项）
+  const wsSet = await tools.get('mc_admin_config').execute({ action: 'set', path: 'injectWorkspaceAgentsMd', value: true }, A).catch((e) => e.message)
+  const followSet = await tools.get('mc_admin_config').execute({ action: 'set', path: 'rulesFollowVersion', value: 'yes' }, A).catch((e) => e.message)
+  console.log(`  ${/未知配置项/.test(String(wsSet)) && /未知配置项/.test(String(followSet)) ? '✅' : '❌'} 🔴 三个提示词开关已不在全局配置（mc_admin_config 报未知项）：${String(wsSet).slice(0, 34)}…`)
+  const { WS_DEFAULTS } = await import('./src/wsconfig.mjs')
+  console.log(`  ${WS_DEFAULTS.injectWorkspaceAgentsMd === false && WS_DEFAULTS.injectWhaleCraftAgentsMd === true && WS_DEFAULTS.rulesFollowVersion === true ? '✅' : '❌'} 🔴 按工作区开关的默认值 = 下放前的全局默认（注入准则开 / 注入工作区关 / 随版本更新开）`)
 
   /* 「文件分享」模式：管理员工具能设 / 非法值被拒 / 砍掉的 local 被拒 / base 必须是 http(s) */
   const setShare = (value, path = 'expressMode') =>
@@ -2490,9 +2619,35 @@ console.log('\n--- 行事准则 RULES.md / 新开关 / 边界信息 ---')
   const shareReset = await tools.get('mc_admin_config').execute({ action: 'get', path: 'expressMode' }, A)
   console.log(`  ${shareReset.value === 'off' ? '✅' : '❌'} reset 后分享模式回到默认**关闭**（${shareReset.value}）`)
 
-  const memMd = await tools.get('mc_kit_memory').execute({ action: 'read', path: 'RULES.md' }, A).catch((e) => e.message)
-  const memMdOld = await tools.get('mc_kit_memory').execute({ action: 'read', path: 'AGENTS.md' }, A).catch((e) => e.message)
-  console.log(`  ${/不能通过记忆工具读写/.test(String(memMd)) && /不能通过记忆工具读写/.test(String(memMdOld)) ? '✅' : '❌'} 记忆工具拒绝读写行事准则（RULES.md 与老名 AGENTS.md 都挡）`)
+  /* 受保护文件在记忆工具里：**可读不可写**（RULES.md / AGENTS.md / config.json 同一套，用户 2026-10-03 定）*/
+  {
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const cwd = mkdtempSync(join(tmpdir(), 'whale-prot-'))
+    const root = join(cwd, '.whale-craft')
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(root, 'RULES.md'), '# 受保护的准则\n', 'utf8')
+    writeFileSync(join(root, 'config.json'), '{"schema":1,"rulesVersion":"9.9.9"}\n', 'utf8')
+    const mdExec = { agent: { id: 'sess-PROT', session: { header: { cwd } } } }
+    const savedMem2 = process.env.WHALE_CRAFT_MEMORY_DIR
+    delete process.env.WHALE_CRAFT_MEMORY_DIR      // 让记忆根跟着这个工作区走
+    try {
+      const memReadRules = await tools.get('mc_kit_memory').execute({ action: 'read', path: 'RULES.md' }, mdExec)
+      console.log(`  ${/受保护的准则/.test(String(memReadRules.content)) ? '✅' : '❌'} 🔴 记忆工具**可以读**行事准则（可读不可写）`)
+      const memReadCfg = await tools.get('mc_kit_memory').execute({ action: 'read', path: 'config.json' }, mdExec)
+      console.log(`  ${/"rulesVersion":"9\.9\.9"/.test(String(memReadCfg.content)) ? '✅' : '❌'} 🔴 记忆工具**可以读**工作区 config.json`)
+      const protW1 = await tools.get('mc_kit_memory').execute({ action: 'write', path: 'config.json', content: '{}' }, mdExec).catch((e) => e.message)
+      const protW2 = await tools.get('mc_kit_memory').execute({ action: 'delete', path: 'RULES.md' }, mdExec).catch((e) => e.message)
+      const protW3 = await tools.get('mc_kit_memory').execute({ action: 'append', path: 'AGENTS.md', text: 'x' }, mdExec).catch((e) => e.message)
+      console.log(`  ${/只读/.test(String(protW1)) && /只读/.test(String(protW2)) && /只读/.test(String(protW3)) ? '✅' : '❌'} 🔴 记忆工具对受保护文件的写/删全被拒（config.json / RULES.md / AGENTS.md）`)
+      const listAfter = await tools.get('mc_kit_memory').execute({ action: 'index' }, mdExec)
+      console.log(`  ${!(listAfter.tree ?? '').includes('config.json') && !(listAfter.tree ?? '').includes('RULES.md') ? '✅' : '❌'} 受保护文件不进记忆索引/目录树（list 里看不到）`)
+    } finally {
+      if (savedMem2 === undefined) delete process.env.WHALE_CRAFT_MEMORY_DIR
+      else process.env.WHALE_CRAFT_MEMORY_DIR = savedMem2
+    }
+  }
 
   // 边界信息工具
   const caps = await tools.get('mc_capabilities').execute({}, A)

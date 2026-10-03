@@ -25,18 +25,19 @@
  *
  * 安全：所有路径过 safePath()——拒绝绝对路径、`..`、超深路径，且解析后必须仍在
  * `.whale-craft/` 内。记忆工具**不是**通用文件编辑器的替身，边界就是这个文件夹。
+ * 根级的受保护文件（RULES.md / AGENTS.md / config.json，见 src/protected.mjs）**可读不可写**：
+ * safePath 放行（标记 protected），写类方法显式拒绝。
  * ============================================================================
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, unlinkSync, rmSync, openSync, readSync, closeSync } from 'node:fs'
 import { join, resolve, dirname, sep, posix, extname, basename } from 'node:path'
+import { isProtectedName, protectedWriteError } from './protected.mjs'
 
 const MAX_FILES = 2000
 const MAX_TEXT_BYTES = 256 * 1024          // 文本写入上限
 const MAX_BLOB_BYTES = 16 * 1024 * 1024    // 任意文件（含图片）存入上限
 const GLOBAL_DIR = '_global'
 const README_FILE = 'README.md'
-/** 插件自己的文件（根目录下的）不算"记忆"：索引、行事准则（新名/老名）、账户库、全局配置 */
-const PLUGIN_FILES = new Set([README_FILE, 'RULES.md', 'AGENTS.md', 'accounts.json', 'config.json', '.rules-version'])
 const MAX_DEPTH = 5
 
 /** 目录/文件名允许的字符：中英文、数字、`._-`、空格（首尾空格与点会被拒）。 */
@@ -104,21 +105,14 @@ export class MemoryStore {
    * 相对路径 → 根目录下的绝对路径。
    * 拒绝：绝对路径、`.`/`..` 片段、超深、非法字符、越界。
    * **不限扩展名**（用户要求"读写任何格式文件"）。
+   * 根级的受保护文件（RULES.md / AGENTS.md / config.json）在这里**放行**（读允许），
+   * 结果带 `protected:true`，由写类方法（append/write/delete/put）显式拒绝。
    */
   safePath (rel) {
     const raw = String(rel ?? '').trim().replace(/\\/g, '/')
     if (!raw) throw new Error('path 不能为空')
     if (raw.startsWith('/') || /^[A-Za-z]:/.test(raw)) throw new Error('path 必须是相对路径（如 mc.example.com/landmarks.md）')
     const parts = raw.split('/').filter((p) => p !== '')
-    // 行事准则由 Master 在「MC设置 → 提示词」里维护，**AI 不许读写**（读写都从这条路断掉）
-    // ⚠️ 新旧两个名字都要挡：`RULES.md` 是现在的存储名，`AGENTS.md` 是改名前的（残留的文件同样不许碰）
-    if (parts.length === 1 && /^(?:RULES|AGENTS)\.md$/i.test(parts[0])) {
-      throw new Error('行事准则（.whale-craft/RULES.md）不能通过记忆工具读写——它是给 Master 编辑的（在「MC设置 → 提示词」里改）')
-    }
-    // 插件自己的状态文件（版本标记）同样不许 AI 读写：改了它会让"随版本更新"判断错乱
-    if (parts.length === 1 && PLUGIN_FILES.has(parts[0]) && parts[0] !== README_FILE) {
-      throw new Error(`插件自己的文件（.whale-craft/${parts[0]}）不能通过记忆工具读写`)
-    }
     if (parts.length === 0) throw new Error('path 不能为空')
     if (parts.some((p) => p === '..' || p === '.')) throw new Error('path 不允许包含 . 或 ..')
     if (parts.length > MAX_DEPTH) throw new Error(`path 太深（最多 ${MAX_DEPTH} 层）`)
@@ -130,7 +124,12 @@ export class MemoryStore {
     const relFull = parts.join('/')
     const abs = resolve(this.root, ...parts)
     if (abs !== this.root && !abs.startsWith(this.root + sep)) throw new Error('path 越界')
-    return { abs, rel: relFull, kind: kindOf(parts[parts.length - 1], abs) }
+    return {
+      abs,
+      rel: relFull,
+      kind: kindOf(parts[parts.length - 1], abs),
+      protected: parts.length === 1 && isProtectedName(parts[0]),
+    }
   }
 
   /** 由 topic/server 拼路径：<server>/<topic>.md；server 省略则 _global */
@@ -159,7 +158,7 @@ export class MemoryStore {
         try { st = statSync(abs) } catch { continue }
         if (st.isDirectory()) { walk(abs, rel); continue }
         if (name === README_FILE && !dirRel) continue       // README 是索引本身，不算记忆条目
-        if (!dirRel && PLUGIN_FILES.has(name)) continue     // 插件自己的文件（账户库/配置）也不算
+        if (!dirRel && isProtectedName(name)) continue      // 受保护文件（行事准则/工作区配置）也不算
         const kind = kindOf(name, abs)
         const group = rel.includes('/') ? rel.slice(0, rel.indexOf('/')) : GLOBAL_DIR
         const item = {
@@ -288,6 +287,7 @@ export class MemoryStore {
       const dir = server ? String(server).trim() : GLOBAL_DIR
       target = this.safePath(posix.join(dir, `${base}${ext}`))
     }
+    if (target.protected) throw new Error(protectedWriteError(target.rel))
     if (!existsSync(dirname(target.abs))) mkdirSync(dirname(target.abs), { recursive: true })
     writeFileSync(target.abs, readFileSync(source))
     this._textCache = { text: '', at: 0 }
@@ -305,6 +305,7 @@ export class MemoryStore {
     if (body.length > 4000) throw new Error(`一条记忆太长（${body.length} 字），上限 4000`)
 
     const target = path ? this.safePath(path) : this.pathFor({ topic, server })
+    if (target.protected) throw new Error(protectedWriteError(target.rel))
     if (target.kind !== 'text') throw new Error(`append 只能用在文本文件上（${target.rel} 是 ${target.kind}）`)
     const files = this.list()
     if (!existsSync(target.abs) && files.length >= MAX_FILES) {
@@ -347,6 +348,7 @@ export class MemoryStore {
     if (!body.trim()) throw new Error('content 不能为空（要删文件请用 action:"delete"）')
     if (Buffer.byteLength(body) > MAX_TEXT_BYTES) throw new Error(`内容超过 ${MAX_TEXT_BYTES / 1024}KB 上限`)
     const target = path ? this.safePath(path) : this.pathFor({ topic, server })
+    if (target.protected) throw new Error(protectedWriteError(target.rel))
     if (target.kind === 'binary' || target.kind === 'image') {
       throw new Error(`${target.rel} 按二进制处理；要存文件请用 action:"put"（它会复制源文件）`)
     }
@@ -360,6 +362,7 @@ export class MemoryStore {
   /** 删：删文件；path 指向目录时整目录删 */
   delete ({ path = null, topic = null, server = null } = {}) {
     const target = path ? this.safePath(path) : this.pathFor({ topic, server })
+    if (target.protected) throw new Error(protectedWriteError(target.rel))
     if (!existsSync(target.abs)) throw new Error(`没有这个文件/目录：${target.rel}`)
     const st = statSync(target.abs)
     if (st.isDirectory()) {

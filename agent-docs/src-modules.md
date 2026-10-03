@@ -75,9 +75,9 @@
 
 - 构造 `(root, {create=true})`；**生产用 `create:false`**：目录只在两个时机建（首次 MC 模式会话 / 点开 MC设置，`ensureMemoryRootCwd` + `seededRoots` 去重）。
 - 常量：单文件文本 256KB、图片 16MB、最多 2000 文件、深度 ≤5、段名 `^[\w.\-一-龥 ]+$`。
-- **`safePath(rel)` 是唯一安全关口**：拒空/绝对路径/盘符；`RULES.md`、`AGENTS.md` 与根级插件文件（README/accounts/config/.rules-version）**对 AI 封锁**；拒 `.`/`..`/深层/超长/非法段；`resolve` 后必须仍在 root 内。
-- 方法：`ensureRoot/ensureReadme`（骨架只建一次）· `pathFor({topic,server})`（server 缺省 `_global/`；无扩展名补 `.md`）· `list()`（根级插件文件不算记忆；解析标题/条目数/摘要）· `renderTree()`/`indexText()`（5s 缓存；注入用 = README 正文 + 目录树）· `read()`（文本→content；**图片→附件**（工具层 `attachments.saveImage`）；二进制→元信息）· `put()`（**把工作区任意文件复制进记忆**，16MB，name 清洗）· `append({text,key})`（单条 ≤4000 字；同 key 正则替换旧 bullet）· `write()`（整文件覆盖，拒图片）· `delete()` · `search()`（跨文本文件逐行，limit ≤100）· `overview()`。
-- 写后清 `_textCache`（投递的索引恒新）。⚠️ `list()` 只豁免**根级**插件文件，`.out/`/`.express/` 会被遍历进去（未专门跳过）。
+- **`safePath(rel)` 是路径安全关口**：拒空/绝对路径/盘符/`.`/`..`/深层/超长/非法段，`resolve` 后必须仍在 root 内。**不再做文件名封锁** —— 根级的受保护文件（RULES.md/AGENTS.md/config.json，见 src/protected.mjs）在这里**放行（读允许）**，结果带 `protected:true`，由写类方法显式拒绝（用户 2026-10-03：可读不可写）。
+- 方法：`ensureRoot/ensureReadme`（骨架只建一次）· `pathFor({topic,server})`（server 缺省 `_global/`；无扩展名补 `.md`）· `list()`（根级 README 与受保护文件不算记忆；解析标题/条目数/摘要）· `renderTree()`/`indexText()`（5s 缓存；注入用 = README 正文 + 目录树）· `read()`（文本→content；**图片→附件**（工具层 `attachments.saveImage`）；二进制→元信息）· `put()`（**把工作区任意文件复制进记忆**，16MB，name 清洗）· `append({text,key})`（单条 ≤4000 字；同 key 正则替换旧 bullet）· `write()`（整文件覆盖，拒图片）· `delete()` · `search()`（跨文本文件逐行，limit ≤100）· `overview()`。
+- `append/write/delete/put` 对 `protected` 目标一律抛"只读"（`protectedWriteError`）。写后清 `_textCache`（投递的索引恒新）。⚠️ `list()` 只跳过**根级**的 README 与受保护文件，`.out/`/`.express/` 会被遍历进去（未专门跳过）。
 
 ## 5. `src/agentsmd.mjs` —— RULES.md 行事准则
 
@@ -85,8 +85,8 @@
 - `DEFAULT_AGENTS_MD`（默认准则）小节：宗旨 / 称呼 / 记忆 / 边界信息 / 登录游戏 / 看门狗 / 聊天 / 建筑须知 / 较长思考 / 硬规矩。
 - `migrateLegacyAgentsMd`：老 `AGENTS.md` → 内容搬进 RULES.md，原文件**改名**为 `AGENTS.md.bak-<时间戳>`（不删：内容不丢、宿主不再认）；幂等。
 - `readAgentsMd`（`source` 按内容是否逐字等于默认判 `default/custom`）；`writeAgentsMd`（空拒；≤128KB）；`resetAgentsMd`（**把默认写回文件**而非删除）。
-- `isAgentsMdPath(text)`：先把 JSON 转义还原再匹配 —— 供 guard 在文件工具参数里**硬拒**对 RULES/AGENTS 的读写（AI 不可读写，只有 Master 在「MC设置→提示词」编辑）。
-- `syncRulesVersion(dir, version, {follow})` + `.rules-version` 标记：无文件→建默认+`created`；有文件无标记→只记版本 `marked`（**不覆盖**）；版本变+follow 开→替换为默认 `replaced`；follow 关→只更新标记 `kept`（以后打开**不翻旧账**）。
+- 路径守卫（原 `isAgentsMdPath`）已**移出**到 `src/protected.mjs`（与 config.json 统一判定）。
+- `syncRulesVersion(dir, version, {follow})`：无文件→建默认+`created`；有文件无版本记录→只记版本 `marked`（**不覆盖**）；版本变+follow 开→替换为默认 `replaced`；follow 关→只更新记录 `kept`（以后打开**不翻旧账**）。版本读写走 `src/wsconfig.mjs` 的 `readRulesVersion/setRulesVersion`（存 `<记忆根>/config.json` 的 `rulesVersion` 字段；旧 `.rules-version` 标记由 wsconfig.migrate 迁入后删除）。
 
 ## 6. `src/version-prompt.mjs` —— 版本硬提示词
 
@@ -112,14 +112,13 @@
 | `mcMode.hideAdminTools` | `true` | 隐藏 `mc_admin_*`（另有 guard 硬拒） |
 | `memoryDir` | `null` | null = `<工作区>/.whale-craft` |
 | `allowAllCommands` | `false` | 指令白名单总开关 |
-| `injectWhaleCraftAgentsMd` | `true` | 注入 RULES.md |
-| `injectWorkspaceAgentsMd` | `false` | 额外注入工作区根 AGENTS.md |
-| `rulesFollowVersion` | `true` | 版本变 → 替换 RULES.md（靠 `.rules-version`；首见只记不覆盖） |
+| （提示词三开关 `injectWhaleCraftAgentsMd` / `injectWorkspaceAgentsMd` / `rulesFollowVersion` **已下放为按工作区**，存 `<工作区>/.whale-craft/config.json`，见 [§14 wsconfig](#14-srcwsconfigmjs--按工作区的配置)） | | |
 | `ensureMcPreset` | `true` | 启动自举「MC模式」preset |
 | `expressMode` | `'off'` | 文件分享：`off`/`online`（老值 `local` 一律当 off） |
 | `expressBase` | `''` | online 模式的访问 base |
 
 - `PluginConfig`：`load`（坏配置不崩、记 `lastError` 按默认跑）、`set` 只认 `TOP_KEYS`（= DEFAULT_CONFIG 键）且过 `validate`、`values()` 深合并（数组整体覆盖）；语义 getter（`mcModePresets/memoryDir/expressMode/expressBase/commandAllowed/isMcModePreset`…）每次现读 ⇒ **改完热生效**。
+- `legacyPromptSwitches()`：从**文件原值**里取旧版全局存过的三个提示词开关（只取显式设过且类型合法的）—— 只作工作区建档时的一次性 seed 来源（消费方 index.js → `wsconfig.migrate`）。
 - `resolveStateDir`：`WHALE_CRAFT_STATE_DIR` → `WHALE_CRAFT_DIR`+whaleDir → `$DSH_HOME/whale_craft` → `~/.dsh/whale_craft`。
 
 ### preset 规划（纯函数，供 index.js 的自举）
@@ -163,8 +162,26 @@
 - `parseAddress`（默认 25565；认 `host`、`host:port`、`[::1]:25565`；裸 IPv6 抛错）；`flattenMotd`（拍平 + 去 `§` 色码）；`friendlyNetError`（ECONNREFUSED/ETIMEDOUT/ENOTFOUND/… → 人话；`unsupported protocol` → 建议手填 version）。
 - `statusPing({host, port, timeoutMs, fakeHost, version})`：**永不抛异常**（P0 教训：一切 reject/超时收敛成 `{ok:false, error, hint}`）。流程：不用上游 `mc.ping`（不暴露 client、超时 120s），用 `minecraft-protocol` 原语自建：握手（nextState=1）→ STATUS → `ping_start` → 收 `server_info` → 写 `ping` 量往返延迟 → 无论成败 `client.end()+socket.destroy()` 防挂 socket。硬超时夹 [1s,30s] 默认 5s；成功返回 `{ok:true, elapsedMs, handshakeMs, statusMs, latencyMs, version, protocol, players{online,max,sample≤12}, motd, motdRaw, hasFavicon}`。
 
-## 14. 模块依赖与不变式
+## 14. `src/wsconfig.mjs` —— 按工作区的配置
 
-- 唯一模块间 import：`config.mjs → express.mjs`（`EXPRESS_MODES/normalizeExpressBase/resolveExpressMode`）。
+> 用户 2026-10-03 定：按工作区独立的设置（提示词版本 + 「MC设置→提示词」三开关）统一存 `<记忆根>/config.json`（默认 `<工作区>/.whale-craft/config.json`），取代原来的 `.rules-version` 独立标记 + 全局三开关。
+
+- 文件形态 `{schema:1, rulesVersion, rulesFollowVersion, injectWhaleCraftAgentsMd, injectWorkspaceAgentsMd}`；缺键按 `WS_DEFAULTS`（= 下放前的全局默认）补齐；**未知键保留**（前向兼容）。
+- `load` 不建目录、不抛：文件缺失/坏 JSON/非本格式 → 默认值 + `lastError`；`rulesVersion` 读不到时**兜底旧 `.rules-version`**（未迁移的老工作区行为不变）。
+- 写：`config.json.tmp` + rename 原子替换；`patch` 只收三开关（布尔校验）并保留未知键/版本；**文件坏或非本格式 → 拒绝写**（不覆盖用户数据）。
+- `migrate(root, {seed})`：建档 + 迁移（幂等）—— 无文件则写 `{schema:1}` + seed 里显式给过的旧全局值 + 旧标记值；**写后回读校验通过才删**旧 `.rules-version`；非本格式文件一概不碰（报 error）。调用点：`ensureMemoryRootForCwd`，**必须在 syncRulesVersion 之前**（否则旧版本值这一轮看不到）。
+- 保护：config.json 对 MC 模式 AI **可读不可写**（见 §15）。
+
+## 15. `src/protected.mjs` —— 受保护文件（可读不可写）
+
+> 用户 2026-10-03 定：RULES.md / AGENTS.md（老名）/ config.json 对 MC 模式 AI **只读**。统一收编前身的散落判定：`agentsmd.mjs:isAgentsMdPath`（工具参数 JSON 全文匹配，已删）、`memory.mjs` 的根级文件名封锁。
+
+- `PROTECTED_FILES / isProtectedName`（根级、大小写不敏感）；`isProtectedPathArg(raw)`（guard 用：裸名 或 含 `.whale-craft`/`whale_craft` 段的路径；嵌套记忆文件如 `_global/config.json` 不算）。
+- `WRITE_FILE_TOOLS=/^(write|edit)$/`、`MEMORY_WRITE_ACTIONS=append/write/delete/put`；`rejectionText()` / `protectedWriteError(rel)` 统一文案。
+- guard（index.js）对文件工具用它 + **解析到记忆根后正好是该文件**的二次判定（memoryDir 重定向时绝对路径不含 `.whale-craft` 段）；写入路径以 memory.mjs 的 `target.protected` 为兜底。
+
+## 16. 模块依赖与不变式
+
+- 模块间 import：`config.mjs → express.mjs`（`EXPRESS_MODES/normalizeExpressBase/resolveExpressMode`）；`agentsmd.mjs → wsconfig.mjs`（版本读写）；`memory.mjs → protected.mjs`（保护判定）；index.js 组装其余。
 - 记忆根定位（index.js `memoryRootFor`）：`WHALE_CRAFT_MEMORY_DIR` env → `pluginConfig.memoryDir` → `<会话 cwd>/.whale-craft` → `stateDir/memory` 兜底。
-- 跨模块不变式：① 记忆路径全过 `safePath`，RULES/AGENTS 双向封锁；② 凭据只进宿主凭据服务，`view()`/工具返回/HTTP 永不见；③ 发布区只服务 `.express/`，`.out/` 永不对外；④ LAN 只被动听；⑤ ping 永不 reject；⑥ 一切写给模型的注入都是"提示行"。
+- 跨模块不变式：① 记忆路径全过 `safePath`，受保护文件（RULES/AGENTS/config.json）**可读不可写**（写类方法拒绝）；② 凭据只进宿主凭据服务，`view()`/工具返回/HTTP 永不见；③ 发布区只服务 `.express/`，`.out/` 永不对外；④ LAN 只被动听；⑤ ping 永不 reject；⑥ 一切写给模型的注入都是"提示行"。

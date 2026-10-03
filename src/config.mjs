@@ -8,6 +8,8 @@
  *   · 非 MC 模式的 agent 有个工具能**直接改**这些配置；MC 模式的**不能用不能改**
  *
  * 落盘位置：**`$DSH_HOME/whale_craft/config.json`**（插件自己的家，见 {@link resolveStateDir}）。
+ * ⚠️ 这里是**全局**行为配置；**按工作区**的配置（提示词版本 + 三个提示词开关）在
+ *    src/wsconfig.mjs → `<记忆根>/config.json`（2026-10-03 下放，见该文件头注释）。
  * 🔴 2026-09-16 用户要求：**配置与账户不该躺在工作区里** —— 工作区是某个项目的家，
  *    插件有插件自己的家。宿主在 app-boot 里 `ctx.provide('dshHomePath', …)`，
  *    与 `$DSH_HOME/skills`、`$DSH_HOME/.agent-presets`、`$DSH_HOME/storages`、`$DSH_HOME/attachments` 同一套规矩。
@@ -81,24 +83,9 @@ export const DEFAULT_CONFIG = {
   memoryDir: null,
   /** 「MC设置 → 指令白名单」页的开关：允许所有服务器指令（默认关 = 只放行白名单里的） */
   allowAllCommands: false,
-  /** 是否把 **whale-craft 自己的**行事准则（`.whale-craft/RULES.md`）注入给 MC 模式的 agent */
-  injectWhaleCraftAgentsMd: true,
-  /**
-   * 是否**额外**注入**工作区**的 `AGENTS.md`（默认关）。
-   * 2026-09-16 实测：MC 模式下宿主本来就没注入它（会话日志里 0 次），所以这里控制的是
-   * "我们插件再补一份"，打开即恢复"工作区 AGENTS.md 也在场"。
-   */
-  injectWorkspaceAgentsMd: false,
-  /**
-   * 「提示词」页的「随版本更新」（用户 2026-09-17 定，**默认开**）：
-   * 插件版本一变，就用**新版本的默认行事准则**替换 `<工作区>/.whale-craft/RULES.md`
-   * （用户改过的也会被换掉 —— 这就是这个开关的语义）。
-   *
-   * 判定靠记忆目录里的 `.rules-version` 标记（记"当前内容对应哪个插件版本"）：
-   *   · 第一次遇到这个功能（没有标记）→ 只记版本、**不覆盖**（免得插件一升级就冲掉用户改的准则）；
-   *   · 关掉时只把标记更新到当前版本 ⇒ 以后打开也**不翻旧账**。
-   */
-  rulesFollowVersion: true,
+  /* 注：`injectWhaleCraftAgentsMd` / `injectWorkspaceAgentsMd` / `rulesFollowVersion` 三个提示词
+   * 开关 2026-10-03 起**按工作区**存（`<记忆根>/config.json`，见 src/wsconfig.mjs），不再在这里。
+   * 旧全局值只作迁移 seed 用一次 —— 见 `PluginConfig.legacyPromptSwitches()`。 */
   /**
    * 启动时若 `mcModePresets` 里**一个都不存在**，就自动建一个「MC模式」preset。
    *
@@ -506,6 +493,19 @@ export class PluginConfig {
     return { reset: true, file: this.file, values: this.values() }
   }
 
+  /**
+   * 旧版本里**全局**存过的三个提示词开关（已下放为按工作区，见 src/wsconfig.mjs）。
+   * 迁移 seed 用：只返回文件里**显式设过**且类型合法的值；从未设过 → 不出现（新工作区用默认值）。
+   */
+  legacyPromptSwitches () {
+    const out = {}
+    for (const k of ['rulesFollowVersion', 'injectWhaleCraftAgentsMd', 'injectWorkspaceAgentsMd']) {
+      const v = this.data?.[k]
+      if (typeof v === 'boolean') out[k] = v
+    }
+    return out
+  }
+
   /* ── 语义化读取 ── */
 
   get mcModePresets () {
@@ -587,7 +587,7 @@ function validate (top, rest, value) {
     if (value !== null && typeof value !== 'string') throw new Error('memoryDir 必须是字符串（绝对路径）或 null')
     return
   }
-  if (top === 'allowAllCommands' || top === 'injectWhaleCraftAgentsMd' || top === 'injectWorkspaceAgentsMd' || top === 'ensureMcPreset' || top === 'rulesFollowVersion') {
+  if (top === 'allowAllCommands' || top === 'ensureMcPreset') {
     if (typeof value !== 'boolean') throw new Error(`${top} 必须是 true/false`)
     return
   }

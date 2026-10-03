@@ -13,7 +13,8 @@
  * ============================================================================
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join } from 'node:path'
+import { readRulesVersion, setRulesVersion } from './wsconfig.mjs'
 
 const FILE = 'RULES.md'
 /**
@@ -127,32 +128,10 @@ export function agentsMdPath (dir) { return join(dir, FILE) }
 export function legacyAgentsMdPath (dir) { return join(dir, LEGACY_FILE) }
 
 /**
- * 「随版本更新」的**版本标记**文件（点开头：与 AI 的内容分开，也不进记忆索引）。
- *
- * 它只记一件事：**当前这份 `RULES.md` 对应哪个插件版本**。
- * 插件在"备好记忆目录"那两个时机（首次进 MC 模式会话 / 点开「MC设置」）读它，决定要不要替换。
+ * 「随版本更新」的**版本标记**：原来是一枚独立文件 `.rules-version`，
+ * 2026-10-03 起收进按工作区的 `config.json` 的 `rulesVersion` 字段（读写见 src/wsconfig.mjs，
+ * 迁移会把老工作区里的旧标记文件并进来并删除）。
  */
-const VERSION_FILE = '.rules-version'
-
-/** 版本标记文件路径 */
-export function rulesVersionPath (dir) { return join(dir, VERSION_FILE) }
-
-/** 读版本标记（没有/读不到 = null） */
-export function readRulesVersion (dir) {
-  try {
-    const v = readFileSync(rulesVersionPath(dir), 'utf8').trim()
-    return v || null
-  } catch { return null }
-}
-
-/** 写版本标记（失败只当没记上，不影响使用） */
-function writeRulesVersion (dir, version) {
-  try {
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-    writeFileSync(rulesVersionPath(dir), `${String(version ?? '').trim() || 'unknown'}\n`, 'utf8')
-    return true
-  } catch { return false }
-}
 
 /**
  * 「随版本更新」（用户 2026-09-17 定，**默认启用**）：插件版本一变，就用**本版本的默认准则**
@@ -160,7 +139,7 @@ function writeRulesVersion (dir, version) {
  *
  * 四种情形：
  *   · `RULES.md` 不存在 → 建默认 + 记版本（`created`）；
- *   · 有文件、**没有标记**（老工作区第一次遇到这个功能）→ **只记版本，不动内容**（`marked`）——
+ *   · 有文件、**没有标记**（老工作区第一次遇到这个功能，或刚被迁移进来）→ **只记版本，不动内容**（`marked`）——
  *     "更新版本时才替换"，第一次遇到不算更新，免得插件一升级就把人家改的准则冲掉；
  *   · 标记 ≠ 当前版本 且开关**开** → 覆盖成默认 + 记版本（`replaced`）；
  *   · 标记 ≠ 当前版本 但开关**关** → 只把标记更新到当前版本（`kept`）——
@@ -168,7 +147,7 @@ function writeRulesVersion (dir, version) {
  *   · 标记 = 当前版本 → 什么都不做（`kept`）。
  * @param {string} dir 记忆根（`<工作区>/.whale-craft`）
  * @param {string} version 当前插件版本
- * @param {{follow?:boolean}} [opts] `follow` = 「随版本更新」开关（缺省视为开）
+ * @param {{follow?:boolean}} [opts] `follow` = 「随版本更新」开关（缺省视为开；来自该工作区的 config.json）
  * @returns {{action:'created'|'replaced'|'kept'|'marked', from:string|null, to:string, error?:string}}
  */
 export function syncRulesVersion (dir, version, { follow = true } = {}) {
@@ -178,7 +157,7 @@ export function syncRulesVersion (dir, version, { follow = true } = {}) {
     try {
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
       writeFileSync(p, DEFAULT_AGENTS_MD, 'utf8')
-      writeRulesVersion(dir, to)
+      setRulesVersion(dir, to)
       return { action: 'created', from: null, to }
     } catch (e) {
       return { action: 'kept', from: null, to, error: e.message }
@@ -187,12 +166,12 @@ export function syncRulesVersion (dir, version, { follow = true } = {}) {
   const from = readRulesVersion(dir)
   if (from === to) return { action: 'kept', from, to }
   if (from === null || follow !== true) {           // 第一次遇到 / 开关关着：只记版本，不动内容
-    writeRulesVersion(dir, to)
+    setRulesVersion(dir, to)
     return { action: from === null ? 'marked' : 'kept', from, to }
   }
   try {
     writeFileSync(p, DEFAULT_AGENTS_MD, 'utf8')
-    writeRulesVersion(dir, to)
+    setRulesVersion(dir, to)
     return { action: 'replaced', from, to }
   } catch (e) {
     return { action: 'kept', from, to, error: e.message }
@@ -268,26 +247,4 @@ export function resetAgentsMd (dir) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   writeFileSync(p, DEFAULT_AGENTS_MD, 'utf8')
   return { reset: true, path: p, source: 'default', defaultBytes: Buffer.byteLength(DEFAULT_AGENTS_MD) }
-}
-
-/**
- * 这个路径是不是本文件（给"AI 不许读写"的守卫用）。
- *
- * 认三类写法：
- *   · 新名字：`.whale-craft/RULES.md`（以及在插件包里的 `whale_craft/RULES.md`）；
- *   · **老名字**：`.whale-craft/AGENTS.md` —— 迁移完成前/用户手放的文件也要挡住，
- *     否则 AI 用老名字写一份出来，宿主又把它当工作区指令注入（正是改名要躲开的那件事）；
- *   · 工作区根上的 `AGENTS.md`（那是给 Master 编辑的、属于 DSH 原生的东西，同样不许 AI 动）。
- */
-export function isAgentsMdPath (text) {
-  // ⚠️ 传进来的通常是工具参数的 JSON 串，Windows 路径里的 `\` 已被转义成 `\\`：
-  //    先还原，再判定，否则 `E:\x\.whale-craft\AGENTS.md` 会漏判（真机自检踩过）。
-  const s = String(text ?? '')
-    .replace(/\\\\/g, '\\')
-    .replace(/\\"/g, '"')
-  // ① `.whale-craft/RULES.md` / `whale_craft/RULES.md`（含老名字 AGENTS.md）
-  if (/[/\\]\.?whale[-_]craft[/\\](?:RULES|AGENTS)\.md/i.test(s)) return true
-  if (/[/\\]whale_craft[/\\](?:RULES|AGENTS)\.md/i.test(s)) return true
-  // ② 裸文件名（记忆工具里的相对路径就是这种）
-  return /(^|[/\\"'\s])(?:RULES|AGENTS)\.md(["'\s]|$)/i.test(s)
 }

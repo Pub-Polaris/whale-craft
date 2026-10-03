@@ -15,7 +15,7 @@
 | 0.1.5 | 2026-09-18 | **P0：连不存在的服务器崩整个 DSH**；行事准则第五版（较长思考）；`mc_lan` 只留广播；新增 `mc_ping`；uncaughtException 通道收口 |
 | 0.1.6 | 2026-09-19 | 皮肤站登录 400（authenticate 补 Yggdrasil 必填 `agent` 字段） |
 | 0.1.7 | 2026-09-20 | 三修：断线状态不同步（三处撒谎）／`mc_events{waitSec}` 堵唤醒／1.21·1.21.1 进服秒踢（协议护栏）+ 幽灵在线 |
-| main 未发版 | 2026-09 末 / 10-02 | GitHub issue #1 五处修复（工具组探针静默失效等，版本无关）；`tools/dev.mjs` 调试工具链（`chore: 调试工具`）；26.2 按键上报兼容层整体移除（上游尚无 26.2 数据；详见 F10）；DSH 版本范围声明（engines.dsh + dsh peer）；**0.1 时代死配置/死代码清理**（Config 的 7+2 个无人读字段、`jsonSafe`、`connect` 旧字符串签名、`BUILTIN_AUTH_SERVERS` 别名、patch.yml 的 autoConnect 块）；**插件页中英本地化**（鲸鱼工艺 / Whale Craft + 描述；`locale/*.json` 逐文件 exports——模式写法踩过 `en.json.json` 静默坑） |
+| main 未发版 | 2026-09 末 / 10-03 | GitHub issue #1 五处修复（工具组探针静默失效等，版本无关）；`tools/dev.mjs` 调试工具链（`chore: 调试工具`）；26.2 按键上报兼容层整体移除（上游尚无 26.2 数据；详见 F10）；DSH 版本范围声明（engines.dsh + dsh peer）；**0.1 时代死配置/死代码清理**（Config 的 7+2 个无人读字段、`jsonSafe`、`connect` 旧字符串签名、`BUILTIN_AUTH_SERVERS` 别名、patch.yml 的 autoConnect 块）；**插件页中英本地化**（鲸鱼工艺 / Whale Craft + 描述；`locale/*.json` 逐文件 exports——模式写法踩过 `en.json.json` 静默坑）；**按工作区 settings→`config.json`**（提示词三开关从全局下放 + `.rules-version` 迁入删除 + 受保护文件统一"可读不可写"） |
 
 ## 2. 事故档案（按主题）
 
@@ -95,6 +95,7 @@
 | `mc_give` 走协议级 `set_creative_slot` | 创造模式即可用，**不需要 OP**；也绕过指令白名单 |
 | `mc_sequence` 上限 64 步 | 让模型做"连串动作"比让它写脚本稳；步数上限防失控 |
 | 事件队列与看门狗留档**分家** | `sess.events`（AI 拉）/`watchdog.log`（唤醒留档）语义不同；双写曾是 bug，"唯一写入方"写进注释与断言 |
+| 按工作区设置统一收进 `<工作区>/.whale-craft/config.json`（2026-10-03） | 提示词三开关原来存**全局**，而「MC设置」弹窗本身按工作区门控、RULES.md 也按工作区 —— 语义错位；版本标记原来是独立 `.rules-version` 文件。合并成一个文件后：保护语义统一为**可读不可写**（与 RULES.md 一致；散落的 `isAgentsMdPath`/PLUGIN_FILES 判定收编进 `src/protected.mjs`）、写入原子（tmp+rename）、坏文件只读不写、未知键保留；旧数据（`.rules-version`、全局旧值）在建档时一次性迁移，**写后回读校验通过才删**旧标记 |
 | 心跳默认**关**（300s） | 防睡死是可选需求；默认关省 token。开启才走心跳文案 |
 | 唤醒矩阵多数"被动"事件默认关（pushed/捡物/上下线） | 太频繁，只留档不唤醒（`mc_watch log` 可看） |
 | 超时守卫定时器**故意 unref/不 unref** | `withTimeout` 守卫**不 unref**（否则只剩它跑时进程提前退出）；observer timer 可 unref；`disconnect` 宽限计时器**不 unref**（要等完） |

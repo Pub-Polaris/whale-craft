@@ -33,7 +33,9 @@ import { Watchdog, WATCH_DEFAULTS } from './src/watchdog.mjs'
 import { MemoryStore } from './src/memory.mjs'
 import { PluginConfig, DEFAULT_CONFIG, resolveStateDir, pickPresetTarget, pickPresetSource, isCopiedPresetDescription, PREFERRED_PRESET_SOURCES, MC_PRESET_SPEC, planPresetAction, patchPersonaInComposition, personaTextKeyOf, disableShellInComposition, patchToolGroupsIntoComposition, MC_PRESET_TOOL_GROUPS } from './src/config.mjs'
 import { AccountStore, parseAuthlibCard, normalizeServerUrl, dashUuid } from './src/accounts.mjs'
-import { DEFAULT_AGENTS_MD, agentsMdPath, legacyAgentsMdPath, migrateLegacyAgentsMd, readAgentsMd, writeAgentsMd, resetAgentsMd, isAgentsMdPath, syncRulesVersion, readRulesVersion } from './src/agentsmd.mjs'
+import { DEFAULT_AGENTS_MD, agentsMdPath, legacyAgentsMdPath, migrateLegacyAgentsMd, readAgentsMd, writeAgentsMd, resetAgentsMd, syncRulesVersion } from './src/agentsmd.mjs'
+import { wsConfigPath, isWsConfigData, migrate as migrateWorkspaceConfig, values as workspaceConfigValues, patch as patchWorkspaceConfig, readRulesVersion } from './src/wsconfig.mjs'
+import { PROTECTED_FILES, isProtectedPathArg, WRITE_FILE_TOOLS, MEMORY_WRITE_ACTIONS, rejectionText } from './src/protected.mjs'
 import { encodePng } from './src/png.mjs'
 import { userMessage, messageFactoryKind, pluginLoadNote } from './src/user-message.mjs'
 import { ImageEngine, imageEngineAvailable, imageEngineError } from './src/image.mjs'
@@ -364,7 +366,11 @@ export function apply(ctx, config) {
     return process.env.WHALE_CRAFT_DIR ? stateDir : join(stateDir, 'memory')
   }
 
-  /** 老版本（≤0.3.x）把 config/accounts 放在 `<工作区>/.whale-craft/`：每个工作区首次见到时搬一次 */
+  /**
+   * 老版本（≤0.3.x）把**全局** config/accounts 放在 `<工作区>/.whale-craft/`：每个工作区首次见到时搬一次。
+   * ⚠️ config.json 现在是**本插件按工作区**的配置（src/wsconfig.mjs），不再是旧遗留：
+   *    只搬"看着像旧全局配置"的（能解析、且不是本格式）；坏文件与新格式一概不碰。
+   */
   const migratedWorkspaces = new Set()
   const migrateWorkspaceState = (cwd) => {
     if (!cwd || migratedWorkspaces.has(cwd)) return
@@ -373,12 +379,17 @@ export function apply(ctx, config) {
       const from = join(cwd, '.whale-craft', name)
       const to = join(stateDir, name)
       try {
-        if (!existsSync(to) && existsSync(from)) {
-          mkdirSync(stateDir, { recursive: true })
-          copyFileSync(from, to)
-          if (readFileSync(to, 'utf8') === readFileSync(from, 'utf8')) unlinkSync(from)
-          logLine(`已把${label}搬出工作区：${from} → ${to}`)
+        if (existsSync(to) || !existsSync(from)) continue
+        if (name === 'config.json') {
+          let parsed = null
+          try { parsed = JSON.parse(readFileSync(from, 'utf8')) } catch { parsed = null }
+          if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) continue
+          if (isWsConfigData(parsed)) continue     // 按工作区的新配置：不是遗留，别搬
         }
+        mkdirSync(stateDir, { recursive: true })
+        copyFileSync(from, to)
+        if (readFileSync(to, 'utf8') === readFileSync(from, 'utf8')) unlinkSync(from)
+        logLine(`已把${label}搬出工作区：${from} → ${to}`)
       } catch (e) { logLine(`${label}搬迁失败（保留旧位置）：${e.message}`) }
     }
   }
@@ -398,6 +409,10 @@ export function apply(ctx, config) {
     }
     return store
   }
+
+  /** 按工作区的配置（`<记忆根>/config.json`，src/wsconfig.mjs）：读值 / 改三个提示词开关 */
+  const wsCfgValues = (cwd) => workspaceConfigValues(memoryRootFor(cwd))
+  const wsCfgPatch = (cwd, partial) => patchWorkspaceConfig(memoryRootFor(cwd), partial)
 
   const pluginConfig = new PluginConfig(stateDir)
   /** 无会话上下文时用的兜底记忆库（`capabilities` / 扩展 api / 全局注入用） */
@@ -827,22 +842,30 @@ export function apply(ctx, config) {
   let authProbe = null
   const probeBot = () => (authProbe ??= new McBot({ instanceId: 'auth-probe', lockDir: stateDir }))
 
-  /** 设置页要的那几项配置（集中一处，GET/PATCH 共用） */
-  const configView = () => ({
-    commandWhitelist: pluginConfig.get('commandWhitelist'),
-    allowAllCommands: pluginConfig.get('allowAllCommands'),
-    injectWhaleCraftAgentsMd: pluginConfig.get('injectWhaleCraftAgentsMd'),
-    injectWorkspaceAgentsMd: pluginConfig.get('injectWorkspaceAgentsMd'),
-    // 「提示词」页的「随版本更新」（默认开）
-    rulesFollowVersion: pluginConfig.get('rulesFollowVersion') !== false,
-    // 「MC设置 → 文件分享」：模式 + 在线 base（两种模式：off 关闭 / online 在线）
-    expressMode: pluginConfig.expressMode,
-    expressBase: pluginConfig.expressBase,
-    // 「MC设置」入口的模式门控：前端拿这份名单 + 会话记录的 preset 就能**本地**判定
-    // （不必为按钮问一次服务端；2026-09-16 事故：一次性请求失败后按钮永久消失）
-    mcModePresets: pluginConfig.mcModePresets,
-    configFile: pluginConfig.file,
-  })
+  /**
+   * 设置页要的那几项配置（集中一处，GET/PATCH 共用）。
+   * 全局键来自 PluginConfig（`$DSH_HOME/whale_craft/config.json`）；
+   * 三个提示词开关是**按工作区**的（`<记忆根>/config.json`，src/wsconfig.mjs）。
+   */
+  const configView = (cwd) => {
+    const ws = wsCfgValues(cwd)
+    return {
+      commandWhitelist: pluginConfig.get('commandWhitelist'),
+      allowAllCommands: pluginConfig.get('allowAllCommands'),
+      injectWhaleCraftAgentsMd: ws.injectWhaleCraftAgentsMd,
+      injectWorkspaceAgentsMd: ws.injectWorkspaceAgentsMd,
+      // 「提示词」页的「随版本更新」（默认开；按工作区）
+      rulesFollowVersion: ws.rulesFollowVersion !== false,
+      // 「MC设置 → 文件分享」：模式 + 在线 base（两种模式：off 关闭 / online 在线）
+      expressMode: pluginConfig.expressMode,
+      expressBase: pluginConfig.expressBase,
+      // 「MC设置」入口的模式门控：前端拿这份名单 + 会话记录的 preset 就能**本地**判定
+      // （不必为按钮问一次服务端；2026-09-16 事故：一次性请求失败后按钮永久消失）
+      mcModePresets: pluginConfig.mcModePresets,
+      configFile: pluginConfig.file,
+      workspaceConfigFile: wsConfigPath(memoryRootFor(cwd)),
+    }
+  }
 
   const handleSettingsApi = async (req, res, path, url) => {
     const ok = (body) => sendJson(res, 200, { ok: true, ...body })
@@ -979,15 +1002,21 @@ export function apply(ctx, config) {
     if (path === '/api/mc/config' && req.method === 'GET') {
       const gate = await gateOf()
       if (!gate.ok) return sendJson(res, 400, { ok: false, error: gate.error })
-      return ok(configView())
+      return ok(configView(gate.cwd))
     }
     if (path === '/api/mc/config' && req.method === 'PATCH') {
       const gate = await gateOf(body)
       if (!gate.ok) return sendJson(res, 400, { ok: false, error: gate.error })
-      for (const k of ['commandWhitelist', 'allowAllCommands', 'injectWhaleCraftAgentsMd', 'injectWorkspaceAgentsMd', 'rulesFollowVersion', 'expressMode', 'expressBase']) {
+      // 全局键 → PluginConfig；三个提示词开关 → **本工作区**的 config.json
+      for (const k of ['commandWhitelist', 'allowAllCommands', 'expressMode', 'expressBase']) {
         if (body[k] !== undefined) pluginConfig.set(k, body[k])
       }
-      return ok(configView())
+      const wsPatch = {}
+      for (const k of ['injectWhaleCraftAgentsMd', 'injectWorkspaceAgentsMd', 'rulesFollowVersion']) {
+        if (body[k] !== undefined) wsPatch[k] = body[k]
+      }
+      if (Object.keys(wsPatch).length) wsCfgPatch(gate.cwd, wsPatch)
+      return ok(configView(gate.cwd))
     }
 
     /* ── 「MC设置 → 文件分享」：这个工作区的发布区现状 / 清除分享数据 ──────────────
@@ -1030,8 +1059,8 @@ export function apply(ctx, config) {
           path: cur.path,
           isDefault: cur.source === 'default',
           defaultText: DEFAULT_AGENTS_MD,
-          // 「随版本更新」：开关（配置里那份）+ 当前内容对应的版本（`.rules-version` 标记）
-          followVersion: pluginConfig.get('rulesFollowVersion') !== false,
+          // 「随版本更新」：开关 + 当前内容对应的版本 —— 都来自本工作区的 config.json（src/wsconfig.mjs）
+          followVersion: wsCfgValues(cwd).rulesFollowVersion !== false,
           rulesVersion: readRulesVersion(promptDir),
           pluginVersion: PLUGIN_VERSION,
           workspacePath: wsPath,
@@ -1753,12 +1782,13 @@ export function apply(ctx, config) {
           commandWhitelist: pluginConfig.get('commandWhitelist'),
           allowAllCommands: pluginConfig.get('allowAllCommands'),
           memoryDir: memoryFor(workspaceOf(exec?.agent)).root,
+          workspaceConfigFile: wsConfigPath(memoryRootFor(workspaceOf(exec?.agent))),
           mcModePresets: pluginConfig.mcModePresets,
         },
         prompt: {
           agentsMd: agentsMdPath(memoryFor(workspaceOf(exec?.agent)).root),
-          injectWhaleCraftAgentsMd: pluginConfig.get('injectWhaleCraftAgentsMd'),
-          injectWorkspaceAgentsMd: pluginConfig.get('injectWorkspaceAgentsMd'),
+          injectWhaleCraftAgentsMd: wsCfgValues(workspaceOf(exec?.agent)).injectWhaleCraftAgentsMd,
+          injectWorkspaceAgentsMd: wsCfgValues(workspaceOf(exec?.agent)).injectWorkspaceAgentsMd,
         },
       }
     },
@@ -2682,16 +2712,17 @@ export function apply(ctx, config) {
     // 注：消息构造由 `src/user-message.mjs` 保证 —— 宿主实现拿不到就用自带等价实现，
     //     所以这里**不再有"静默失败"的死角**。
 
-    // 顺序：**先工作区，再我们自己的**（用户指定）
+    // 顺序：**先工作区，再我们自己的**（用户指定）。两个开关都是**本工作区**的（src/wsconfig.mjs）。
+    const wsSwitches = wsCfgValues(cwd)
     const items = []
-    if (pluginConfig.get('injectWorkspaceAgentsMd') === true) {
+    if (wsSwitches.injectWorkspaceAgentsMd === true) {
       try {
         const p = join(workspaceRootFor(agent), 'AGENTS.md')
         const t = existsSync(p) ? readFileSync(p, 'utf8').trim() : ''
         if (t) items.push({ rel: 'AGENTS.md', title: '提示词注入：AGENTS.md', text: t })
       } catch { /* 读不到就当没有 */ }
     }
-    if (pluginConfig.get('injectWhaleCraftAgentsMd') === true) {
+    if (wsSwitches.injectWhaleCraftAgentsMd === true) {
       const root = memoryRootFor(cwd)
       ensureAgentsMdFile(root)
       const cur = readAgentsMd(root)
@@ -2866,8 +2897,9 @@ export function apply(ctx, config) {
     const wsAgents = agent ? join(workspaceRootFor(agent), 'AGENTS.md') : null
     const cur = root ? readAgentsMd(root) : null
     const agentsFile = root ? agentsMdPath(root) : null
-    const injectWc = pluginConfig.get('injectWhaleCraftAgentsMd') === true
-    const injectWs = pluginConfig.get('injectWorkspaceAgentsMd') === true
+    const wsSw = wsCfgValues(cwd)
+    const injectWc = wsSw.injectWhaleCraftAgentsMd === true
+    const injectWs = wsSw.injectWorkspaceAgentsMd === true
     const wsExists = Boolean(wsAgents) && existsSync(wsAgents)
     const presetId = (agent && lastPresetSeen.get(agent)) ?? null
     // 🔴 宿主的硬规则（system-prompt/src/index.ts:606）：persona 若写了 `includeRuntimeContext: false`，
@@ -2941,7 +2973,6 @@ export function apply(ctx, config) {
     if (!cwd) return false
     const root = memoryRootFor(cwd)
     if (seededRoots.has(root)) return true
-    seededRoots.add(root)
     try {
       if (!existsSync(root)) {
         mkdirSync(root, { recursive: true })
@@ -2949,12 +2980,20 @@ export function apply(ctx, config) {
       }
       try { if (memoryFor(cwd).ensureReadme()) logLine(`已写入默认记忆索引：${join(root, 'README.md')}`) } catch (e) { logLine(`写默认索引失败：${e.message}`) }
       if (ensureAgentsMdFile(root)) logLine(`已写入默认行事准则：${agentsMdPath(root)}`)
-      /* 「随版本更新」（默认开）：插件版本变了就用新版本默认准则替换文件里那份。
-       * 首次遇到这个功能（没有 `.rules-version` 标记）只记版本、不覆盖；关着时也只记版本。 */
-      const sync = syncRulesVersion(root, PLUGIN_VERSION, { follow: pluginConfig.get('rulesFollowVersion') !== false })
+      /* 按工作区的 config.json（src/wsconfig.mjs）：建档 + 迁移 —— **必须先于下面的版本同步**，
+       * 否则旧 `.rules-version` 的值这一轮看不到，会被当成"第一次遇到"（from=null，只 marked 不替换）。
+       * seed = 旧版全局 config.json 里**显式设过**的三个开关（搬进本工作区作初值，之后互不影响）。 */
+      const mig = migrateWorkspaceConfig(root, { seed: pluginConfig.legacyPromptSwitches() })
+      if (mig.created) logLine(`已建立工作区配置：${wsConfigPath(root)}${mig.seeded.length ? `（沿用了 ${mig.seeded.join('/')} 的旧全局值）` : ''}`)
+      if (mig.markerRemoved) logLine(`提示词版本标记已并入工作区配置：${wsConfigPath(root)}（旧的 .rules-version 已删除）`)
+      if (mig.error) logLine(`工作区配置迁移跳过（不影响使用）：${mig.error}`)
+      /* 「随版本更新」（默认开，**按工作区**）：插件版本变了就用新版本默认准则替换文件里那份。
+       * 第一次遇到（没有版本记录）只记版本、不覆盖；关着时也只记版本。 */
+      const sync = syncRulesVersion(root, PLUGIN_VERSION, { follow: workspaceConfigValues(root).rulesFollowVersion !== false })
       if (sync.action === 'replaced') logLine(`插件已更新到 v${sync.to}：「随版本更新」开启 → 行事准则已替换为新版本默认内容（原为 v${sync.from}）`)
       else if (sync.action === 'created') logLine(`已写入默认行事准则：${agentsMdPath(root)}（v${sync.to}）`)
       else if (sync.error) logLine(`行事准则版本同步失败（不影响使用）：${sync.error}`)
+      seededRoots.add(root)   // 只在全部成功后记账（失败本进程还会重试）
       return true
     } catch (e) { logLine(`初始化记忆目录失败（${root}）：${e.message}`); return false }
   }
@@ -3552,8 +3591,25 @@ export function apply(ctx, config) {
         if (/[/\\]secrets[/\\]/i.test(text)) {
           return 'MC 模式不允许读凭据备忘目录（secrets/）；账号密码在「MC设置 → 账户」里维护，AI 不需要也不应该看到。'
         }
-        if (isAgentsMdPath(text)) {
-          return '行事准则（.whale-craft/RULES.md）是给 Master 编辑的，AI 不能读写它（要改请在「MC设置 → 提示词」里改）。'
+        // 受保护文件（RULES.md / AGENTS.md / config.json，src/protected.mjs）：**可读不可写**。
+        // 宿主文件工具里只有 write|edit 会写；记忆工具按 action 判定（memory.mjs 内还有一道兜底）。
+        // 判定 = 路径写法命中（裸名/含 .whale-craft 段）**或**解析到记忆根后正好是那个文件
+        // （记忆根可被 memoryDir 重定向，绝对路径不一定含 `.whale-craft` 段）。
+        const protectedHit = (raw) => {
+          const p = String(raw ?? '').trim()
+          if (!p) return false
+          if (isProtectedPathArg(p)) return true
+          const root = memoryRootFor(workspaceOf(exec?.agent))
+          const abs = resolve(root, p)
+          return PROTECTED_FILES.some((f) => abs === join(root, f))
+        }
+        if (WRITE_FILE_TOOLS.test(name) && protectedHit(fileToolPath(exec))) {
+          return rejectionText()
+        }
+        if (name.toLowerCase() === 'mc_kit_memory'
+          && MEMORY_WRITE_ACTIONS.has(String(args.action ?? ''))
+          && protectedHit(args.path)) {
+          return rejectionText()
         }
       }
 

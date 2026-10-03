@@ -81,6 +81,7 @@ dsh plugin --profile web add link:/path/to/whale-craft
 | 插件日志 | `$DSH_HOME/whale_craft/logs/whale-craft.log`（可用 `MC_LOG` 覆盖） |
 | 会话锁（连服期间） | `$DSH_HOME/whale_craft/.instance.<会话>.json` |
 | **记忆 / 提示词** | **`<会话工作区>/.whale-craft/`**：`README.md`（AI 维护的总索引）+ `RULES.md`（行事准则）+ 任意文档/图片 |
+| **按工作区的配置** | `<会话工作区>/.whale-craft/config.json`（提示词三个开关 + 版本标记；对 MC 模式 AI **只读**） |
 | 出图与发布 | `<会话工作区>/.whale-craft/.out/`（**不对外**）· `<会话工作区>/.whale-craft/.express/`（可访问，见下） |
 
 > 记忆是**按会话工作区**的，与插件装在哪、DSH 装在哪都无关。
@@ -92,9 +93,10 @@ dsh plugin --profile web add link:/path/to/whale-craft
 
 「MC设置」入口有**两个，按会话状态互斥**（任何时刻只出现一个）：**新会话页**上贴在**模式芯片的右边**；
 **已有会话**时落在**对话标题条的操作区**。点开就是账户 / 指令白名单 / 提示词 / 文件分享四个标签页。
-配置落在 `$DSH_HOME/whale_craft/config.json`，改完立即生效。
+改完立即生效。配置分两层：
 
-非 MC 模式下的 AI 可以用 `mc_admin_config` 工具改这些键（**MC 模式会话看不见、也调不动它**）：
+- **全局**（`$DSH_HOME/whale_craft/config.json`）：非 MC 模式下的 AI 可以用 `mc_admin_config` 工具改
+  （**MC 模式会话看不见、也调不动它**）：
 
 | 键 | 含义 | 默认 |
 | --- | --- | --- |
@@ -103,13 +105,20 @@ dsh plugin --profile web add link:/path/to/whale-craft
 | `mcModePresets` | 哪些 preset 算"MC 模式"（权限隔离的判据） | `["minecraft","whale_craft"]` |
 | `mcMode.allowOtherTools` | MC 模式白名单里**额外**放行的其它工具（默认只给 `mc_*` / `mc_kit_*` / 文件工具 / `present`） | `[]` |
 | `mcMode.hideAdminTools` | 是否把 `mc_admin_*` 也放进白名单（默认隐藏，另有 guard 硬拒） | `true` |
-| `injectWhaleCraftAgentsMd` | 是否把 `.whale-craft/RULES.md`（行事准则）注入 MC 模式会话 | `true` |
-| `injectWorkspaceAgentsMd` | 是否**额外**注入工作区根上的 `AGENTS.md` | `false` |
-| `rulesFollowVersion` | 「提示词」页的「随版本更新」：插件版本一变，就用新版本默认准则**替换** `.whale-craft/RULES.md` | `true` |
 | `expressMode` | 文件分享：「文件分享」页选的模式：`off` 关闭 / `online` 在线 | `"off"` |
 | `expressBase` | 在线模式的 base（你访问这台 DSH 的地址，可带路径前缀） | `""` |
 | `memoryDir` | 记忆根目录（`null` = 用会话工作区的 `.whale-craft/`） | `null` |
 | `ensureMcPreset` | 启动时若 `mcModePresets` 里**一个 preset 都不存在**，就复制官方 `minimal` 建一个「MC模式」（已存在则绝不动） | `true` |
+
+- **按工作区**（`<工作区>/.whale-craft/config.json`，与 RULES.md 同目录；在「MC设置 → 提示词」页改，
+  对 MC 模式的 AI **只读**）：每个工作区独立一份，互不影响。
+
+| 键 | 含义 | 默认 |
+| --- | --- | --- |
+| `injectWhaleCraftAgentsMd` | 是否把 `.whale-craft/RULES.md`（行事准则）注入 MC 模式会话 | `true` |
+| `injectWorkspaceAgentsMd` | 是否**额外**注入工作区根上的 `AGENTS.md` | `false` |
+| `rulesFollowVersion` | 「提示词」页的「随版本更新」：插件版本一变，就用新版本默认准则**替换** `.whale-craft/RULES.md` | `true` |
+| `rulesVersion` | 插件写：当前 `RULES.md` 对应哪个插件版本（旧工作区里单独的 `.rules-version` 标记会自动迁移进来并删除） | — |
 
 ---
 
@@ -201,11 +210,11 @@ dsh plugin --profile web add link:/path/to/whale-craft
   而且不受本插件的开关控制。改成不在候选名单里的名字，注入就只剩我们这一条、且只对 MC 模式生效。
   老工作区里若已有 `.whale-craft/AGENTS.md`，插件会**自动搬进 `RULES.md`** 并把老文件改名备份
   （`AGENTS.md.bak-<时间>`）。
-- 行事准则**只有你能改**：AI 不能读写它（工具与记忆工具两条路都挡），要改就在「MC设置 → 提示词」里编辑，
-  那里也能一键**恢复默认**。
+- 行事准则**只有你能改**：AI 对它**只读**（能看不能改，工具与记忆工具两条路一致），要改就在「MC设置 → 提示词」里编辑，
+  那里也能一键**恢复默认**。（工作区 `config.json` 同样只读 —— 与 RULES.md、`AGENTS.md` 一套保护。）
 - **「随版本更新」（默认开）**：插件升级后，用新版本的默认准则**替换**当前内容（**会覆盖你的修改**）；
-  判定靠记忆目录里的 `.rules-version` 标记。想长期维持自己那份就把它**关掉** —— 关掉后插件永不动它，
-  且关着期间不会"攒着"：以后再打开也不会突然覆盖。
+  当前版本记录在工作区 `config.json` 的 `rulesVersion` 字段里（老工作区单独的 `.rules-version` 标记会自动迁移进去并删除）。
+  想长期维持自己那份就把它**关掉** —— 关掉后插件永不动它，且关着期间不会"攒着"：以后再打开也不会突然覆盖。
 
 ---
 
@@ -324,6 +333,7 @@ CI 跑的就是这两条（`.github/workflows/ci.yml`）：**ubuntu（Node 22 / 
 - 在线模式的 `base` **不做连通性自检**：填错了只有你自己能发现（AI 拿到的 URL 打不开）。
 - 🔴 **行事准则为什么叫 `RULES.md`**（见上）：`AGENTS.md` 会被 DSH 当工作区指令自动注入到任何碰过该目录的会话，
   与 MC 模式无关 —— 所以这个名字是刻意的。
+- 把 `memoryDir` 指到共享目录时，多个工作区会**共用**同一份记忆与 `config.json`（按工作区的设置也随之共享）。
 - 工具描述与文档目前是**中文**。
 - **能连的 MC 版本取决于依赖里的 `mineflayer`**；想连官方还没支持的新版本，可以自行替换 profile 里的那一份。
 - 归档保护依赖宿主内部方法，DSH 升级后可能需要跟进。
@@ -405,6 +415,7 @@ This installs the package and appends `whale_craft` to `dsh.profile.bundles`.
 | --- | --- |
 | Config · accounts · logs · lock | `$DSH_HOME/whale_craft/` |
 | Memory · prompt · output · published files | `<workspace>/.whale-craft/` (`README.md` · `RULES.md` · `.out/` · `.express/`) |
+| Per-workspace settings | `<workspace>/.whale-craft/config.json` (prompt toggles + version marker; **read-only** to the MC-mode agent) |
 
 Passwords and tokens go to the host credential store only — they never show up in tool output,
 HTTP responses, or the model context.

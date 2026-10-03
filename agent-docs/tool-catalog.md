@@ -61,7 +61,7 @@
 
 | 工具 | 职责 | 关键点 |
 | --- | --- | --- |
-| `mc_kit_memory` | 记忆树读写 | `index/read/append/write/put/delete/search`；`topic`/`server` 自动定位路径（`server` 缺省 = 当前 `bot.sub`）；`append` 带 `key` 覆盖同 key 那条；`put` 把**工作区内任意文件（含图片）**存进记忆；`read` 图片 → **图片附件**；`search` 跨文件。RULES.md/AGENTS.md 双向封锁 |
+| `mc_kit_memory` | 记忆树读写 | `index/read/append/write/put/delete/search`；`topic`/`server` 自动定位路径（`server` 缺省 = 当前 `bot.sub`）；`append` 带 `key` 覆盖同 key 那条；`put` 把**工作区内任意文件（含图片）**存进记忆；`read` 图片 → **图片附件**；`search` 跨文件。受保护文件（RULES.md/AGENTS.md/config.json）**可读不可写**（写/删被拒） |
 | `mc_kit_image` | 图像处理 | `info/embed/render/grid/save`：SVG→PNG 光栅化（`sharp`，可选依赖，缺失只影响 `render`）、引图进 SVG、拼网格（≤64 张，返回 SVG）、落盘。输入输出都限制在本会话工作区内（`insideWorkspace`） |
 | `mc_kit_express` | 把发布区文件换成"给用户的东西" | 路径解析先记忆根后 cwd；只认 `.express/`（目录即白名单）；`off` 模式恒回"文件分享已关闭…绝对路径…"；`online` 回完整 URL；工作区 uuid 查不到即拒。宿主另有 `present`（显式文件交付组，MC 模式白名单里放行）——两者互补 |
 
@@ -69,7 +69,7 @@
 
 | 工具 | 职责 | 关键点 |
 | --- | --- | --- |
-| `mc_admin_config` | 全局配置读写 | `get/set/unset/reset/list` 点号键；改完**立即热生效**（消费方每次过 getter）。**MC 模式会话看不见、也调不动**（白名单隐藏 + guard 硬拒双保险），专供非 MC 模式会话（如 Master 会话）替用户改配置 |
+| `mc_admin_config` | 全局配置读写 | `get/set/unset/reset/list` 点号键；改完**立即热生效**（消费方每次过 getter）。**MC 模式会话看不见、也调不动**（白名单隐藏 + guard 硬拒双保险），专供非 MC 模式会话（如 Master 会话）替用户改配置。只含全局键——提示词三开关已下放为**按工作区**（`<工作区>/.whale-craft/config.json`，在「MC设置→提示词」改），不在本工具里 |
 
 ---
 

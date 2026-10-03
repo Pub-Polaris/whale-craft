@@ -1,7 +1,7 @@
 # whale_craft 内部开发文档（agent-docs）
 
 > 面向接手本仓库的 AI agent 与开发者。**先读这一页**，再按需进入各专题。
-> 快照：whale_craft **0.1.7**（main 比 `v0.1.7` tag 多 2 个未发版 commit：GitHub issue #1 修复、`tools/dev.mjs`），2026-10-02。
+> 快照：whale_craft **0.1.7**（main 比 `v0.1.7` tag 多一批未发版 commit：issue #1 修复、`tools/dev.mjs`、26.2 兼容层移除、DSH 版本范围、插件页本地化、**按工作区 config.json**），2026-10-03。
 > 本文档写"机制与不变式（为什么）"；**细节以代码为准**，文档负责给地图与避坑指引。
 
 ## 项目一句话
@@ -16,6 +16,7 @@ DSH（DeepSeek Harness）原生插件：把一台无头 Minecraft 机器人（mi
 - **提示词只走"插件提示行"**：`source:{kind:'plugin',plugin:'whale_craft',form:'notice'}`，绝不冒充用户发言。
 - **凭据不进模型上下文**：密码/token 只写宿主凭据服务（`$DSH_HOME/.credentials.yaml`），工具返回/HTTP 永不携带。
 - **长期记忆** `<工作区>/.whale-craft/`：AI 维护的文档树，会话开始时以提示行注入索引。
+- **按工作区配置** `<工作区>/.whale-craft/config.json`：提示词三个开关 + 版本标记；对 MC 模式 AI 只读（与 RULES.md 同一套保护）。
 
 ## 代码地图（顶层）
 
@@ -24,7 +25,7 @@ DSH（DeepSeek Harness）原生插件：把一台无头 Minecraft 机器人（mi
 | `index.js`（~3.8k 行） | **host 半端入口**：`apply()` 装配一切 —— Config / McSession / Watchdog、29 个工具、HTTP API、提示词注入、MC 模式权限隔离、preset 自举、归档保护、扩展加载 |
 | `client.js`（~1.8k 行） | **浏览器半端 bundle**（手写 factory，无构建步骤，HMR 热更）：状态条 / MC设置弹窗 / 新会话页 hero 入口 |
 | `src/core.mjs`（~2k 行） | `McBot`：mineflayer 封装（连接/重连/动作/观察/协议护栏）；**不依赖 DSH**，可独立测试 |
-| `src/*.mjs` | 13 个协作模块（watchdog / memory / config / accounts / agentsmd / express / image / png / lan / ping / wait / user-message / version-prompt），全部由 index.js 组装 |
+| `src/*.mjs` | 15 个协作模块（watchdog / memory / config / **wsconfig** / **protected** / accounts / agentsmd / express / image / png / lan / ping / wait / user-message / version-prompt），全部由 index.js 组装 |
 | `tools/` | `check-core.mjs`（静态检查）、`dev.mjs`（隔离调试实例，**本机主用**）、`isolate.mjs`（老方式，需 DSH 源码 checkout） |
 | `selfcheck.mjs`（~3.5k 行） | 600+ 条离线断言：假 ctx 加载**真** `apply()`，不连 MC |
 | `scripts/` | `publish-npm.mjs`（本机手动发 npm）、`land-workflow-fix.mjs`（工作流文件落地）、`release.workflow.yml`（模板） |

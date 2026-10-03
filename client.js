@@ -1434,7 +1434,7 @@ select[data-wc-in]{appearance:none;padding-right:22px;
       const [mdPath, setMdPath] = React.useState('')
       const [injectWc, setInjectWc] = React.useState(true)
       const [injectWs, setInjectWs] = React.useState(false)
-      // 「提示词 → 随版本更新」（默认开）：开关存在全局配置里；marker 是记忆目录里的 .rules-version
+      // 「提示词 → 随版本更新」（默认开）：开关与版本记录都**按工作区**存（.whale-craft/config.json）
       const [followVersion, setFollowVersion] = React.useState(true)
       const [rulesVersion, setRulesVersion] = React.useState(null)
       const [pluginVersion, setPluginVersion] = React.useState('')
