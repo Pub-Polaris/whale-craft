@@ -81,3 +81,18 @@ node scripts/publish-npm.mjs --yes --otp 123456 --tag next
 | tag 工作流红叉、报 `npm …` 失败 | 远端还是旧工作流 → §4 |
 | Release 正文是 `Full Changelog: …` / 附件是 `.tgz` | 同上，旧工作流 → §4 |
 | tag 校验失败 | tag 与 package.json 版本不一致（改 tag 或改版本重发） |
+
+## 7. DSH 版本范围声明（engines.dsh + peerDependencies，2026-10-02 起）
+
+`package.json` 明确声明支持的 DSH **运行时**范围：**`>=0.2.0-rc.1 <0.3.0`**，且三处保持一致（改一处漏两处，selfcheck 的 `DSH_RANGE` 断言会红）：
+
+| 位置 | 性质 |
+| --- | --- |
+| `engines.dsh` | 官方声明字段（`@deepseek-ai/dsh-package-manifest` 定义），**当前宿主不强制**（"兼容性仅作声明"） |
+| `peerDependencies` 的 `@deepseek-ai/dsh-llm` / `@deepseek-ai/dsh-tools` | **真正强制**：宿主 dsh-app-boot 拿它和运行时版本做 `semver.satisfies(runtime, range, {includePrerelease:true})`（只查名字为 `@deepseek-ai/dsh` / `dsh-*` 的 peer；schemastery 不查，保持 `*` 即可） |
+| `selfcheck.mjs` 里的 `DSH_RANGE` 常量 | 把上面几处钉在一起 |
+
+- 失配的后果：**安装被拒**（`dsh plugin add` 预检，exit 1、什么都不装，含 `link:` 本地路径）；已装好的则是**启动时跳过该 bundle**（stderr 一行 `dsh: skipping profile bundle "whale_craft": …`，profile 其余照常）。
+- 逃生门（精确版本豁免）：`dsh plugin --profile web allow-version whale_craft@<版本> --dsh-version <运行时版本> --accept-risk`（配 `revoke-version` / `version-exemptions`；插件管理 UI 同款），落在 `<profile>/compatibility.json`。
+- ⚠️ 范围写法的坑：**预发布必须显式写进范围**——`^0.2.0` 匹配不了 `0.2.0-rc.2`（rc 低于下限）；`^0.2.0-rc.1` / `>=0.2.0-rc.1 <0.3.0` 可以。
+- DSH 升级超出范围时（例如到 0.3.0）：要么发新版放宽/收紧范围，要么在用户侧加豁免——加宽范围前先真机验证。

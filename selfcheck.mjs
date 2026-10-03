@@ -3409,6 +3409,10 @@ console.log('\n--- 依赖面 + 打包完整性（mineflayer 是**依赖**不是"
   const peerMeta = pkg.peerDependenciesMeta ?? {}
   const devDeps = pkg.devDependencies ?? {}
   const req = createRequire(new URL('./index.js', import.meta.url))
+  // 🔴 2026-10-02：支持的 DSH **运行时**范围（engines.dsh 只是声明；真正强制的是 peer，
+  //    宿主 dsh-app-boot 拿它和运行时版本做 semver.satisfies(..., {includePrerelease:true})）。
+  //    预发布必须显式写进下限——`^0.2.0` 匹配不了 `0.2.0-rc.2`（低于下限）。
+  const DSH_RANGE = '>=0.2.0-rc.1 <0.3.0'
 
   // mineflayer 自己声明的 vec3 范围：我们必须跟它**同一条线**，否则会装出两份 vec3 → instanceof 失效
   let mfVec3Range = null
@@ -3443,7 +3447,8 @@ console.log('\n--- 依赖面 + 打包完整性（mineflayer 是**依赖**不是"
     ['解析到的 mineflayer 版本满足声明范围（`^4.37.1` 允许 4.39.0）', !!mfVersion && caretOk(deps.mineflayer, mfVersion)],
     ['sharp 放 optionalDependencies（原生模块装不上也不该让整个安装失败）', typeof opt.sharp === 'string' && deps.sharp === undefined],
     ['宿主包走 peerDependencies（@deepseek-ai/dsh-llm / dsh-tools / schemastery）', typeof peer['@deepseek-ai/dsh-llm'] === 'string' && typeof peer['@deepseek-ai/dsh-tools'] === 'string' && typeof peer['@deepseek-ai/schemastery'] === 'string'],
-    ['peer 范围写 `*`（npm 上 dsh-tools 只有 0.0.1-rc.1，钉版本号必错）', peer['@deepseek-ai/dsh-llm'] === '*' && peer['@deepseek-ai/dsh-tools'] === '*' && peer['@deepseek-ai/schemastery'] === '*'],
+    ['dsh peer 范围 = 支持的运行时范围（schemastery 不是 dsh-* 名字，宿主不查，保持 *）', peer['@deepseek-ai/dsh-llm'] === DSH_RANGE && peer['@deepseek-ai/dsh-tools'] === DSH_RANGE && peer['@deepseek-ai/schemastery'] === '*'],
+    ['engines.dsh 与 peer 范围一致（engines.dsh 是官方声明字段，当前宿主不强制）', pkg.engines?.dsh === DSH_RANGE],
     // 🔴 2026-09-16 第八轮：单纯写成 peer 不够 —— npm/pnpm 会**自动去 npm 装一份** 0.0.1-rc.1，
     //    和宿主那份（本机是源码树的 0.1.5-rc.2）变成**两个 Tool 类**。声明成 optional peer 才不装。
     ['宿主包是 **optional** peer（否则包管理器会装出第二份 Tool 类）', peerMeta['@deepseek-ai/dsh-llm']?.optional === true && peerMeta['@deepseek-ai/dsh-tools']?.optional === true && peerMeta['@deepseek-ai/schemastery']?.optional === true],

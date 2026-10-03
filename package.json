@@ -20,7 +20,8 @@
     "url": "https://github.com/yzi1b/whale-craft/issues"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "dsh": ">=0.2.0-rc.1 <0.3.0"
   },
   "type": "module",
   "main": "index.js",
@@ -49,8 +50,8 @@
     "sharp": "^0.35.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-llm": "*",
-    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/dsh-llm": ">=0.2.0-rc.1 <0.3.0",
+    "@deepseek-ai/dsh-tools": ">=0.2.0-rc.1 <0.3.0",
     "@deepseek-ai/schemastery": "*"
   },
   "peerDependenciesMeta": {
