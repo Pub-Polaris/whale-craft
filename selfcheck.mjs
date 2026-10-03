@@ -3448,6 +3448,12 @@ console.log('\n--- 依赖面 + 打包完整性（mineflayer 是**依赖**不是"
   const files = pkg.files ?? []
   const covered = (rel) => files.some((f) => String(f) === rel || rel.startsWith(String(f).replace(/\/$/, '') + '/'))
   const srcFiles = readdirSync(join(root, 'src')).filter((n) => n.endsWith('.mjs')).map((n) => `src/${n}`)
+  // 插件页本地化（2026-10-02）：宿主 readPluginMeta 读 locale/<语言>.json 的 meta.title/description。
+  // 🔴 两条硬约束：① 文件名用**语言 id**——内置语言就是 zh / en（resolveText 按小写键查），
+  //    写成 zh-CN.json 会得到永不命中的键 'zh-cn'；② en.json 是**触发条件**（先解析它才会读整个目录）。
+  const locEn = (() => { try { return JSON.parse(readFileSync(join(root, 'locale/en.json'), 'utf8')) } catch { return null } })()
+  const locZh = (() => { try { return JSON.parse(readFileSync(join(root, 'locale/zh.json'), 'utf8')) } catch { return null } })()
+  const localeFiles = (() => { try { return readdirSync(join(root, 'locale')).filter((n) => n.endsWith('.json')).sort() } catch { return [] } })()
 
   const packChecks = [
     ['files 覆盖运行入口（index.js / client.js / cordis.patch.yml）', ['index.js', 'client.js', 'cordis.patch.yml'].every(covered)],
@@ -3456,6 +3462,14 @@ console.log('\n--- 依赖面 + 打包完整性（mineflayer 是**依赖**不是"
     ['files 覆盖 tools/check-core.mjs 与 extensions/', covered('tools/check-core.mjs') && covered('extensions')],
     ['files 里没有运行期产物（node_modules / logs / config / accounts）', !files.some((f) => /node_modules|^logs|config\.json|accounts\.json/.test(String(f)))],
     ['files 里每个条目都真实存在', files.every((f) => existsSync(join(root, String(f))))],
+    // ── 插件页本地化（见上方 locale 注释）──
+    // 🔴 exports 必须**逐文件**导出：试过模式写法 `"./locale/*": "./locale/*.json"`——'*' 会把
+    //    'en.json' 整体吞掉，映射成 en.json.json（2026-10-02 实测踩到，且是静默失效，
+    //    字符串形式的断言还会假绿）。这里按目录里的每个文件逐一对账。
+    ['🔴 exports 逐文件导出 locale/*.json（宿主按 <包名>/locale/en.json 解析；漏一个=静默回退成包名）', localeFiles.length > 0 && localeFiles.every((f) => pkg.exports?.[`./locale/${f}`] === `./locale/${f}`)],
+    ['files 覆盖 locale/ 里每个文件（npm 包里要带上本地化文件）', localeFiles.every((f) => covered(`locale/${f}`))],
+    ['插件页本地化文件齐全：en/zh 的 meta.title + meta.description 都非空', !!locEn?.meta?.title && !!locEn?.meta?.description && !!locZh?.meta?.title && !!locZh?.meta?.description],
+    ['插件页显示名：en=Whale Craft / zh=鲸鱼工艺', locEn?.meta?.title === 'Whale Craft' && locZh?.meta?.title === '鲸鱼工艺'],
   ]
   for (const [label, passed] of packChecks) console.log(`  ${passed ? '✅' : '❌'} ${label}`)
 

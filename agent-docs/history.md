@@ -15,7 +15,7 @@
 | 0.1.5 | 2026-09-18 | **P0：连不存在的服务器崩整个 DSH**；行事准则第五版（较长思考）；`mc_lan` 只留广播；新增 `mc_ping`；uncaughtException 通道收口 |
 | 0.1.6 | 2026-09-19 | 皮肤站登录 400（authenticate 补 Yggdrasil 必填 `agent` 字段） |
 | 0.1.7 | 2026-09-20 | 三修：断线状态不同步（三处撒谎）／`mc_events{waitSec}` 堵唤醒／1.21·1.21.1 进服秒踢（协议护栏）+ 幽灵在线 |
-| main 未发版 | 2026-09 末 / 10-02 | GitHub issue #1 五处修复（工具组探针静默失效等，版本无关）；`tools/dev.mjs` 调试工具链（`chore: 调试工具`）；26.2 按键上报兼容层整体移除（上游尚无 26.2 数据；详见 F10）；DSH 版本范围声明（engines.dsh + dsh peer）；**0.1 时代死配置/死代码清理**（Config 的 7+2 个无人读字段、`jsonSafe`、`connect` 旧字符串签名、`BUILTIN_AUTH_SERVERS` 别名、patch.yml 的 autoConnect 块） |
+| main 未发版 | 2026-09 末 / 10-02 | GitHub issue #1 五处修复（工具组探针静默失效等，版本无关）；`tools/dev.mjs` 调试工具链（`chore: 调试工具`）；26.2 按键上报兼容层整体移除（上游尚无 26.2 数据；详见 F10）；DSH 版本范围声明（engines.dsh + dsh peer）；**0.1 时代死配置/死代码清理**（Config 的 7+2 个无人读字段、`jsonSafe`、`connect` 旧字符串签名、`BUILTIN_AUTH_SERVERS` 别名、patch.yml 的 autoConnect 块）；**插件页中英本地化**（鲸鱼工艺 / Whale Craft + 描述；`locale/*.json` 逐文件 exports——模式写法踩过 `en.json.json` 静默坑） |
 
 ## 2. 事故档案（按主题）
 

@@ -194,3 +194,24 @@ DSH host 进程
 7. `sessionController.prompt` 是 @Remote（必传 signal）；`agent.steer` 在 step 边界的消费语义。
 8. `hosts`/`trustedHosts`、`webServer` 最长前缀路由。
 9. jobs 服务的 `owner` 语义（`stopSession` 只杀自己名下的）。
+
+## 14. DSH 插件页（0.2.0+）：名称/描述 与 设置入口
+
+两张面孔：侧栏「插件」管理面板（`dsh-client-ui-plugin-manager`，装/停/配置，渲染图标）与 设置→「内置插件」库存页（只读列表）。名称/描述两张共用同一份数据。
+
+**显示元数据**（宿主 `readPluginMeta`，读自包内文件）：
+
+- 标题/描述 = `locale/<语言 id>.json` 的 `{ "meta": { "title", "description" } }`；回退 `package.json.name` / `description`。`en.json` 是**触发条件**（先解析到它，才会读整个 locale 目录）。
+- 语言 id 内置就是 `zh` / `en`（`resolveText` 按小写键查）⇒ 中文文件必须叫 `zh.json`，`zh-CN.json` 永不命中。
+- 图标 = `package.json.icon`（包内相对路径；SVG/PNG/JPEG/WebP，≤256 KiB，转 data URL）。
+- 🔴 locale 文件必须**逐文件**写进 `exports` 才能被解析到（模式写法 `"./locale/*": "./locale/*.json"` 会把 `en.json` 吞成 `en.json.json`，静默失效——2026-10-02 实测踩过）；漏了 = 静默回退成包名。
+- 本仓库现状：`locale/en.json` + `locale/zh.json`（Whale Craft / 鲸鱼工艺），selfcheck 逐文件对账。
+
+**设置入口契约**（浏览器端 client 插槽；完整契约表内嵌在运行时 `dsh-cordis-client-runner`，可搜索查任意插槽）：
+
+- `plugins.bundle.config`（keyed，key = 包名）：bundle 详情页的配置区——契约明确"插件自己的配置"放这里，最贴合。
+- `settings.plugins.tab`（list）：在 设置→内置插件 页加一个标签页（库存页 id `'all'` 是样例）。
+- `plugins.detail.actions` / `.badge` / `.section`（list）：详情页按钮/徽章/区块；组件收到 `subject`，不是本包时渲染 null。
+- `pluginNavigation.openBundle('whale_craft')`：从任何地方跳到插件页并打开指定包（反向入口）。
+- 槽组件可用标准 hooks：`useSessions` / `useWorkspaces` / `usePanelInfo` / `useResource` 等。
+- ⚠️ 全局设置/插件页**没有会话上下文**——MC 设置（settingsGate 要 sessionId/cwd）接入时先解决工作区来源（待做）。

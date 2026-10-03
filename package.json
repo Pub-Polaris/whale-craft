@@ -1,7 +1,7 @@
 {
   "name": "whale_craft",
   "version": "0.1.7",
-  "description": "DSH 原生 Minecraft Agent 插件：每会话独立机器人 + mc_* / mc_kit_* / mc_admin_* 工具 + 单对话看门狗 + 浏览器 UI + 工作区 .whale-craft 记忆",
+  "description": "让 DSH 加入 Minecraft 服务器游玩：有自己的游戏角色，能探索、建造、聊天。",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -28,6 +28,8 @@
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
+    "./locale/en.json": "./locale/en.json",
+    "./locale/zh.json": "./locale/zh.json",
     "./package.json": "./package.json"
   },
   "files": [
@@ -38,6 +40,7 @@
     "src",
     "tools",
     "extensions",
+    "locale",
     "README.md",
     "CHANGELOG.md",
     "THIRD_PARTY_NOTICES.md"
