@@ -162,8 +162,20 @@
 ## 13. `src/ping.mjs` —— STATUS ping
 
 - 协议栈锚点：`requireFromMineflayer` 从 mineflayer 自己的依赖树 `require('minecraft-protocol')`（与 mc_connect 同栈同版本表）。
-- `parseAddress`（默认 25565；认 `host`、`host:port`、`[::1]:25565`；裸 IPv6 抛错）；`flattenMotd`（拍平 + 去 `§` 色码）；`friendlyNetError`（ECONNREFUSED/ETIMEDOUT/ENOTFOUND/… → 人话；`unsupported protocol` → 建议手填 version）。
+- `parseAddress`（默认 25565；认 `host`、`host:port`、`[::1]:25565`；裸 IPv6 抛错）；`formatAddress`（**逆操作**：IPv6 加方括号、默认端口省略）；`flattenMotd`（拍平 + 去 `§` 色码）；`friendlyNetError`（ECONNREFUSED/ETIMEDOUT/ENOTFOUND/… → 人话；`unsupported protocol` → 建议手填 version）。
 - `statusPing({host, port, timeoutMs, fakeHost, version})`：**永不抛异常**（P0 教训：一切 reject/超时收敛成 `{ok:false, error, hint}`）。流程：不用上游 `mc.ping`（不暴露 client、超时 120s），用 `minecraft-protocol` 原语自建：握手（nextState=1）→ STATUS → `ping_start` → 收 `server_info` → 写 `ping` 量往返延迟 → 无论成败 `client.end()+socket.destroy()` 防挂 socket。硬超时夹 [1s,30s] 默认 5s；成功返回 `{ok:true, elapsedMs, handshakeMs, statusMs, latencyMs, version, protocol, players{online,max,sample≤12}, motd, motdRaw, hasFavicon}`。
+
+## 13b. `src/serverhistory.mjs` —— 「连接到MC」的服务器地址历史（全局）
+
+- 落盘 **`<状态目录>/servers.json`**（`$DSH_HOME/whale_craft/`）——**全局**，不按工作区；形态 `{version:1, recent:[addr…]}`。
+- `ServerHistory({dir})`：`list()` / `record(addr)`（**去重 + 最近优先 + 封顶 `MAX_SERVERS=20`**）/ `remove(addr)`；读宽容（坏文件按空跑）、写失败只记 `lastError`。
+- **只存地址字符串**（不存账户/凭据）。**只有手动点「连接」才 `record`**；局域网直连不记（调用方保证）。
+
+## 13c. `src/connect-prompt.mjs` —— 「连接到MC」注入的提示词
+
+- `buildConnectPrompt({address, account, via})` → 英文正文（`via='lan'` 时追加"该地址在局域网、可能是临时的"一行）。
+- **追加插槽 `CONNECT_PROMPT_APPENDERS`**：`(ctx)=>string` 的数组，非空即按序追加（"因属性追加提示词"的扩展点，默认空）。
+- 可读版本同步在 `dev-docs/prompt/connect_to_mc.md`（**改一处要改两处**）。
 
 ## 14. `src/wsconfig.mjs` —— 按工作区的配置
 

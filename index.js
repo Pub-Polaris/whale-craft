@@ -43,7 +43,9 @@ import { encodePng } from './src/png.mjs'
 import { userMessage, messageFactoryKind, pluginLoadNote } from './src/user-message.mjs'
 import { ImageEngine, imageEngineAvailable, imageEngineError } from './src/image.mjs'
 import { listenLanBroadcast } from './src/lan.mjs'
-import { statusPing, parseAddress } from './src/ping.mjs'
+import { statusPing, parseAddress, formatAddress, flattenMotd } from './src/ping.mjs'
+import { ServerHistory } from './src/serverhistory.mjs'
+import { buildConnectPrompt } from './src/connect-prompt.mjs'
 import { waitForEvents } from './src/wait.mjs'
 
 export const name = 'whale_craft'
@@ -612,6 +614,8 @@ export function apply(ctx, rawConfig) {
    * ------------------------------------------------------------------------ */
   const accounts = new AccountStore({ dir: stateDir, logger: ctx.logger ?? null })
   accounts.ensureDefaults()
+  /** 「连接到MC」弹窗的服务器地址历史（**全局**，只存地址；见 src/serverhistory.mjs） */
+  const serverHistory = new ServerHistory({ dir: stateDir })
   // 凭据服务可能晚就绪 → 必须 ctx.inject 等（老教训：apply() 时 ctx.get() 常是 undefined）
   ctx.inject(['credentials'], (scope) => {
     accounts.credentials = scope.get('credentials') ?? null
@@ -917,6 +921,42 @@ export function apply(ctx, rawConfig) {
     }
   }
 
+  /**
+   * 「连接到MC」弹窗的**局域网探测**（🔴 后端做，前端只拿结果）：
+   *   ① 被动多播听一小段拿候选（src/lan.mjs——不发包、不扫段）；
+   *   ② 对候选逐个做一次 STATUS ping（src/ping.mjs）拿**在线人数 / 版本 / MOTD**；
+   *   ③ 地址用 `formatAddress` 规范化（IPv6 加方括号、默认端口省略）。
+   * 失败/超时的行**照样保留**（`players:null`），别让用户连地址都看不到。
+   */
+  const probeLan = async ({ seconds = 3, maxHosts = 16, pingTimeoutMs = 1500, concurrency = 6 } = {}) => {
+    const secs = Math.max(1, Math.min(Number(seconds) || 3, 15))
+    let found = []
+    try { found = await listenLanBroadcast({ seconds: secs }) } catch { found = [] }
+    const hosts = found.slice(0, maxHosts)
+    const servers = []
+    for (let i = 0; i < hosts.length; i += concurrency) {
+      const rows = await Promise.all(hosts.slice(i, i + concurrency).map(async (h) => {
+        const host = String(h?.host ?? '').trim()
+        const port = Number(h?.port) || 25565
+        if (!host) return null
+        let ping = null
+        try { ping = await statusPing({ host, port, timeoutMs: pingTimeoutMs }) } catch { ping = null }
+        const ok = ping?.ok === true
+        return {
+          host,
+          port,
+          address: formatAddress(host, port),
+          // MOTD 一律**剥掉颜色码**（§x）、**换行符换成空格**再给前端（前端按"固定两行"折行显示）
+          motd: flattenMotd(ok ? ping.motd : h?.motd).replace(/[\r\n]+/g, ' ').replace(/[ \t]{2,}/g, ' ').trim(),
+          version: ok ? (ping.version ?? null) : null,
+          players: ok ? { online: ping.players?.online ?? null, max: ping.players?.max ?? null } : null,
+        }
+      }))
+      for (const r of rows) if (r) servers.push(r)
+    }
+    return { servers, seconds: secs }
+  }
+
   const handleSettingsApi = async (req, res, path, url) => {
     const ok = (body) => sendJson(res, 200, { ok: true, ...body })
     // ⚠️ DELETE **也带 body**（前端把 innerID/id 放在 body 里）——只有 GET 没有 body。
@@ -928,6 +968,23 @@ export function apply(ctx, rawConfig) {
      * 按钮显示与否会和服务端口径不一致（2026-09-16 自查出来的自伤）。 */
     if (path === '/api/mc/presets' && req.method === 'GET') {
       return ok({ mcModePresets: pluginConfig.mcModePresets })
+    }
+
+    /* ── 「连接到MC」弹窗（2026-10-04）：服务器地址历史 + 局域网探测 ──────────────
+     * 都**不需要工作区**（历史是全局的；探测是纯网络动作），所以不走 settingsGate。 */
+    if (path === '/api/mc/servers' && req.method === 'GET') {
+      return ok({ servers: serverHistory.list() })
+    }
+    if (path === '/api/mc/servers' && req.method === 'POST') {
+      const addr = String(body.address ?? '').trim()
+      if (!addr) throw new Error('address 不能为空')
+      return ok({ servers: serverHistory.record(addr) })
+    }
+    if (path === '/api/mc/servers' && req.method === 'DELETE') {
+      return ok({ servers: serverHistory.remove(String(body.address ?? '')) })
+    }
+    if (path === '/api/mc/lan' && req.method === 'POST') {
+      return ok(await probeLan({ seconds: body.seconds }))
     }
 
     const usableWorkspace = (p) => {
@@ -1341,13 +1398,51 @@ export function apply(ctx, rawConfig) {
       return sendJson(res, 200, { ok: true, ...result })
     }
 
-    /* ── 「MC设置」模态框用的接口（门控名单 / 账户 / 认证服务器 / 白名单 / 提示词 / 文件分享）──
+    /* ── 「连接到MC」弹窗点「连接」/ 局域网行：**注入提示词 + 让该会话跑一轮** ──────────
+     * 🔴 这里**只注入、不真连**：真正的连接由 LLM 去调 `mc_connect` 完成（用户 2026-10-04 定）。
+     * 🔴 注入走**插件提示行**（`source.kind='plugin:whale_craft'`），**绝不冒充用户发言**；
+     *    唤醒范式照抄看门狗（先 interruptWait，再 steer——空闲起一轮、运行中插话）。
+     * 历史只记**手动输入**的地址（`via!=='lan'`）；局域网直连不记。 */
+    if (req.method === 'POST' && path === '/api/mc/connect') {
+      const body = await readJsonBody(req)
+      const sessionId = String(body.sessionId ?? '')
+      const address = String(body.address ?? '').trim()
+      const via = body.via === 'lan' ? 'lan' : 'manual'
+      if (!sessionId) return sendJson(res, 400, { ok: false, error: 'sessionId 必填' })
+      if (!address) return sendJson(res, 400, { ok: false, error: 'address 不能为空' })
+      const agent = safeAgentById(sessionId)
+      if (!agent) return sendJson(res, 400, { ok: false, error: '找不到这个会话（sessionId 不对或会话已结束）' })
+      const acc = accounts.resolve(String(body.accountId ?? '').trim() || null)
+      const view = acc ? accounts.view(acc) : null
+      const accountLabel = view ? `${view.name} (id: ${view.innerID})` : '(默认账户)'
+      const asUser = body.asUser === true
+      const text = buildConnectPrompt({ address, account: accountLabel, via })
+      if (via !== 'lan') serverHistory.record(address)
+      // 唤醒范式（照抄 src/watchdog.mjs）：先打断可能的 mc_events 等待，再 steer
+      try { registry.peek(sessionId)?.interruptWait?.('connect') } catch { /* 没在等就算了 */ }
+      /**
+       * 🔴 **新对话页**（`asUser:true`）：插件提示行在新会话里不灵（实测）⇒ **模拟玩家发言**：
+       *    来源 `kind:'user'`、正文前加 `[system] `。**对话中**仍走插件提示行（`plugin:whale_craft` + notice）。
+       */
+      const message = asUser
+        ? userMessage({ content: [{ type: 'text', text: `[system] ${text}` }], source: { kind: 'user' } })
+        : userMessage({
+          content: [{ type: 'text', text }],
+          source: { kind: 'plugin:whale_craft', form: 'notice', summary: `连接到MC：${address}`.slice(0, 120) },
+        })
+      agent.steer(message)
+      logLine(`连接到MC：已${asUser ? '投递玩家消息' : '注入提示词'}（${address}｜${accountLabel}｜via=${via}）`)
+      return sendJson(res, 200, { ok: true, injected: true, asUser, address, account: accountLabel })
+    }
+
+    /* ── 「MC设置」模态框用的接口（门控名单 / 账户 / 认证服务器 / 白名单 / 提示词 / 文件分享 / 服务器历史与探测）──
      * 🔴 2026-09-17 隔离实例实测抓到的**真 bug**：`/api/mc/presets` 一直没进这个分派名单
      *    （它只在 `handleSettingsApi` 里判过），于是真机上它一律 404 —— 前端只能靠
      *    `MC_PRESETS_FALLBACK` 兜底，名单一旦和默认值不同就悄悄失灵。谁再加接口，**记得也加这里**。 */
     if (path.startsWith('/api/mc/accounts') || path.startsWith('/api/mc/authservers')
       || path.startsWith('/api/mc/agents-md') || path === '/api/mc/config'
-      || path === '/api/mc/express' || path === '/api/mc/presets') {
+      || path === '/api/mc/express' || path === '/api/mc/presets'
+      || path === '/api/mc/servers' || path === '/api/mc/lan') {
       try {
         return await handleSettingsApi(req, res, path, url)
       } catch (e) {

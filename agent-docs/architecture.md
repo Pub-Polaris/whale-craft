@@ -170,9 +170,14 @@ kind 变化先 release 再套新）：
 | `/api/mc/config`（GET/PATCH） | 配置读写（**分流**：全局键 → PluginConfig；提示词三开关 → 该工作区的 config.json）。**可无工作区**：工作区键回 `null` / PATCH 丢弃工作区键 |
 | `/api/mc/agents-md`（GET/PUT/DELETE） | RULES.md 读/写/恢复默认。**GET 可无工作区**（只读回内置默认 `DEFAULT_AGENTS_MD`）；PUT/DELETE 必须有工作区 |
 | `/api/mc/express`（GET/DELETE） | 分享状态 / 「清除分享数据」 |
+| `/api/mc/servers`（GET/POST/DELETE） | 「连接到MC」的**服务器历史**（全局 `<状态目录>/servers.json`，只存地址字符串；**不走闸门**） |
+| POST `/api/mc/lan` | 「连接到MC」的**局域网探测**（后端多播监听 + 逐个 `statusPing` 拿在线人数；**不走闸门**） |
+| POST `/api/mc/connect` | 「连接到MC」点连接：**注入 + `agent.steer` 让该会话跑一轮**（**不自己连**，由 LLM 调 `mc_connect`）；**手动**连接才记历史。`asUser:true`（新对话页）→ 投**玩家消息**（`kind:'user'`，正文前 `[system] `）；否则走插件提示行 |
 | GET/HEAD `/api/whale-craft/express/<工作区uuid>/<相对路径>` | 发布区文件（仅 online 模式） |
 
 - **设置类 API 的错误形态统一 200 + `{ok:false, error, needUserAction?, hint?}`**（前端 `apiFetch` 要求 `payload.ok===true`）。
+- **「连接到MC」的注入时机（2026-10-04）**：`/api/mc/connect` 只**注入 + 唤醒**——`sess.interruptWait('connect')` → `agent.steer(message)`（空闲起一轮、运行中插话）。正文由 `src/connect-prompt.mjs` 组装（追加插槽 `CONNECT_PROMPT_APPENDERS`）。历史只记 `via!=='lan'` 的地址（`src/serverhistory.mjs`，全局 `servers.json`）。
+  ⚠️ **对话中**用插件提示行（`source.kind='plugin:whale_craft'` + notice，**绝不冒充用户**）；**新对话页**（`asUser:true`）改用**玩家消息**（`kind:'user'` + 正文前 `[system] `）——用户明确要求的例外，因为在全新会话里插件提示行不触发那一轮。
 - **设置两类模式（2026-10-04）**：`resolveWorkspaceCwd` 解析 sessionId → 工作区（或 client 报的 cwd），**可空、不建档**；`settingsGate` = 它 + 查不到就 400 + `ensureMemoryRootForCwd`（"点开 MC设置"是仅有的两个建记忆目录时机之一）。**accounts / authservers 是全局数据、不走闸门**；`/api/mc/config` 与 `agents-md` GET **可无工作区**（前者只回全局键、工作区键为 `null`；后者只读回内置默认）。`/api/mc/express` 仍必须有工作区。
   🔴 无工作区时**绝不能**把 `null` 喂给 `wsCfgValues` / `memoryRootFor` —— `memoryRootFor(null)` 会兜底到 `stateDir(/memory)` 这个**全局**目录。
 - **express 路由安全**：uuid 是 DSH 工作区注册表的**稳定 id**（查不到就 404，**不退回目录名**）；路径**逐段**白名单拼接（`..`/`.`/空段/段内分隔符/盘符/`~`/控制字符一律拒）→ 拼完 `realpath` 复查仍在发布区内（**符号链接也出不去**）；不列目录；单文件 ≤32MB；svg/html 加 `Content-Security-Policy: sandbox`。

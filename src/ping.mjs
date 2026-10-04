@@ -72,6 +72,18 @@ function clampPort (p) {
   return n
 }
 
+/**
+ * `{host, port}` → 地址字符串（{@link parseAddress} 的逆）。
+ * IPv6（含 `:`）加方括号；端口等于 `defaultPort` 就省略。
+ */
+export function formatAddress (host, port = 25565, defaultPort = 25565) {
+  const h = String(host ?? '').trim()
+  if (!h) return ''
+  const p = Number(port) || defaultPort
+  const hostPart = h.includes(':') ? `[${h}]` : h
+  return p === defaultPort ? hostPart : `${hostPart}:${p}`
+}
+
 /** MOTD 可能是字符串、`{text}` 组件或组件数组 → 拍平成纯文本（顺手去掉 `§` 颜色码） */
 export function flattenMotd (d) {
   if (d == null) return ''

@@ -8,14 +8,14 @@
 
 `client.js` 是**手写 factory bundle**（无构建步骤，`exports["./client"]` 直接指向它；
 改完由 `@deepseek-ai/dsh-client-hmr` 热换，**不需要**重启实例，刷新页面即可）。
-它只做三件事：会话状态条 / 强制停止、**「设置」模态框**、以及往宿主插槽注册入口。
+它做几件事：会话状态条 / 强制停止、**「设置」与「连接到MC」两个模态框**、以及往宿主插槽注册入口。
 
 ## 插槽扩展点清单
 
 | 插槽 | kind | 作用域 | 入口 | 何时出现 |
 | --- | --- | --- | --- | --- |
-| `conversation.session.header.actions` | list | **session** | 状态条 / 强制停止（order 50）、「设置」按钮（order 45） | 进了游戏的会话 |
-| `conversation.input.right` | list | **session** | 新会话页 hero 的「设置」按钮（**驱动器**，本身 return null，按钮靠 DOM 插到模式芯片右边） | 新会话页 + MC 模式 |
+| `conversation.session.header.actions` | list | **session** | 状态条 / 强制停止（order 50）、「设置」（order 45）、**「连接到MC」（order 40，在设置左边）** | 进了游戏的会话 |
+| `conversation.input.right` | list | **session** | 新会话页 hero 的 **「连接到MC」+「设置」**（**驱动器**，本身 return null，按钮靠 DOM 按 order 插到模式芯片右边） | 新会话页 + MC 模式 |
 | `plugins.detail.actions` | list | **root** | 插件页 → **whale_craft 详情页**头部的「设置」按钮（order 20） | 打开 whale_craft 的 bundle 详情页时 |
 
 - **会话插槽**（前两个）由宿主注入 `sessionId` / `useSessions` / 会话 cwd，能做"按会话/工作区"的判定与请求。
@@ -69,6 +69,52 @@
 
 提示词页「注入」区的两个文件名（`RULES.md` / `AGENTS.md`）用 `FileName` 渲染：文件不存在时**斜体灰删除线**
 + hover「目前没有这个文件」（`data-wc-missing`），但**不禁用**开关——开关始终用于改配置。
+
+## 「连接到MC」按钮 + 弹窗（2026-10-04）
+
+两个入口（与「设置」**同一套 MC 模式门控**，无工作区时**禁用**）：标题条（order 40）与
+新会话页 hero（DOM 注入，按 `HERO_BTN_ORDER` 排在「设置」**左边**）。**标题条那个在游戏中隐藏**
+（`useMcStatus(sid).active === true`）。按钮 = **运行图标 + 文字「连接到MC」**；
+🔴 运行图标用 **`IconTriangleRightFillRegular` 的几何 + CSS 描边成「空心三角」**（`RunIcon` + `.wc-runicon path{fill:none;stroke:currentColor}`）——
+**不要带外圈的 play，也不要实心**。
+⚠️ **为什么默认看着特别小**：那个三角在 16×16 viewBox 里只画在中间一小块（约 5.7×8），四周全是透明边
+（视觉上"又小、左右间隔又大"）。所以 `RunIcon` 的 CSS 用 `transform-box:fill-box; transform-origin:center;
+transform:scale(1.35)` **按图形自身**略微放大（**别放满**，放满反而比设置图标还显大），
+再配 `vector-effect:non-scaling-stroke` 让描边不跟着变粗。
+
+弹窗 `McConnectModal`（受控 `open`/`onClose`；hero 走 `connectBus`）。**固定窗口尺寸**
+（`width:min(760px,100%); height:min(82vh,600px)`），内容靠上、**配置行做贴底 footer**（中间留白）：
+1. 服务器地址输入 + 「连接」按钮（运行图标；两者**等高 34px**——输入框必须 `box-sizing:border-box`）。
+2. **历史气泡行**：`overflow-x:auto; flex-wrap:nowrap`（不换行左右滚），气泡可 × 移除。
+   **历史是全局的**（`$DSH_HOME/whale_craft/servers.json`），**只记手动点「连接」的地址**，局域网直连不记。
+3. **局域网探测**（后端 `probeLan`：多播监听 + 逐个 `statusPing` 拿人数/版本/MOTD）：探测中是
+   **方块一行、文案一行**（各占一行、水平居中），方块只动 opacity 的呼吸动画；出结果后**整张卡片就是
+   一个按钮**（`<button data-wc-cn-lan>`），运行图标**无缝嵌在卡片里**（`data-wc-cn-run`，不是独立按钮）。
+   行内容 =「局域网」chip + 地址 + **MOTD** + **版本号（人数左边）** + 在线人数 + ▶。
+   · 🔴 **预留待实现**：`MC_VERSION_IN_RANGE(version)`（client.js，`const MC_VERSION_IN_RANGE = () => null`）
+     ——**目前恒返回 `null`（未实现）**，即所有版本都按"在范围内"处理（**版本号显示绿色**）。
+     将来实现后：支持返回 `true`、不支持 `false`；`false` 时版本号标红、点它会弹错误框且不发起连接。
+   · **MOTD**（`data-wc-cn-motd`）：地址**右边**、灰色、**固定两行**（`-webkit-line-clamp:2`）；
+     后端已 `flattenMotd` 剥颜色码 **并把换行符换成空格**（`.replace(/[\r\n]+/g,' ')`），前端只按宽度折行。
+   · **版本号**：在插件支持范围内**绿**、超出**红**——判定用 `MC_VERSION_IN_RANGE`（**目前预留未实现**，
+     返回 `null` ⇒ 按"在范围内"处理）；· **人数**：未满**绿**、满/超**红**（`data-wc-cn-bad`）。
+   · **版本不符或人满**：点它**弹错误框且不发起连接**。版本支持 = 不填输入框、不记历史。
+4. 分隔线 + 配置行：**账户下拉**（选项 `名字（来源）`——**「（来源）」是灰的**，`data-wc-cn-src`；
+   默认选中默认账户；末尾灰色**「添加/管理」**）+ 预留的「选项」区（`data-wc-cn-extras`）。
+
+**错误提示**：`data-wc-cn-error` **浮在地址上方的留白里**（`position:absolute`，不挤内容），**3s 自动消失**
+（定时器随 `error` 变化 / 卸载清掉）。
+
+**「添加/管理」→ 打开「设置」弹窗落到「账户」页**：`McSettingsModal` 加了 `initialTab` prop
+（受控打开时生效），并以 `nested: true` 渲染 → 遮罩加 `data-wc-nested`（z-index 1200）**叠在连接弹窗之上**；
+**必须是兄弟节点**（不能嵌在连接弹窗的遮罩里，否则点它会冒泡触发"点遮罩关闭"）。
+
+**点击「连接」/ 局域网卡片 → `POST /api/mc/connect`**：**注入 + 让该会话跑一轮**，
+真正的连接由 LLM 调 `mc_connect` 完成（见 architecture.md；提示词在 `src/connect-prompt.mjs`，
+追加插槽 `CONNECT_PROMPT_APPENDERS`）。**两种投递方式**：
+- **对话中**（标题条入口）：插件提示行（`source.kind='plugin:whale_craft'`, notice）。
+- **新对话页**（hero 入口，`asUser: true`）：插件提示行在新会话里不灵（实测）⇒ **模拟玩家发言**
+  ——`source.kind='user'`，正文前加 **`[system] `**。⚠️ 这是**用户明确要求的**例外。
 
 ## 🔴 弹窗约定：右上角关闭按钮（2026-10-04 用户定，其余弹窗照此）
 

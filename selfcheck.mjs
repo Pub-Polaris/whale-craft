@@ -1566,7 +1566,11 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     console.log(`  ${/notices: sent/.test(src) && /segments: \{/.test(src) ? '✅' : '❌'} 状态块报的是**实际投出去的文件**（noticesSent，不许再撒谎）`)
     // 🔴 用户："我不要模拟用户发送啊！" —— 投递的那条必须标成 plugin/notice，且**不许** steer（空闲时会起一轮）
     console.log(`  ${/kind: 'plugin:whale_craft', form: 'notice'/.test(src) && !/kind: 'plugin',/.test(src) ? '✅' : '❌'} 投递的消息标成 plugin/notice —— kind 用 **v4 规范值** plugin:whale_craft（v4 拒绝裸露 'plugin'；不归到用户头上）`)
-    console.log(`  ${!/agent\.steer\(/.test(src) ? '✅' : '❌'} 🔴 插件里**没有** steer 兜底（steer 空闲会"起一轮"＝没问就替用户说话）`)
+    // 🔴 2026-10-04：「连接到MC」是**用户点的**按钮 → 允许 steer（空闲起一轮）。
+    //    除此之外 index.js 一律不许 steer —— 通知投递通道若 steer，空闲时会"起一轮"＝没问就替用户说话。
+    const steerHits = (src.match(/agent\.steer\(/g) ?? []).length
+    const steerOnlyInConnect = steerHits === 1 && /path === '\/api\/mc\/connect'[\s\S]{0,3200}?agent\.steer\(message\)/.test(src)
+    console.log(`  ${steerOnlyInConnect ? '✅' : '❌'} 🔴 steer 只在「连接到MC」（**用户点的**）里；通知投递通道一律不 steer（实得 ${steerHits} 处）`)
   }
 
   // 🔴 用户问的："初始化时能不能检查是不是对的，不对也重新建吗？万一用户更新插件了呢。"
@@ -2744,6 +2748,38 @@ console.log('\n--- 行事准则 RULES.md / 新开关 / 边界信息 ---')
     console.log(`  ${fails.length === 0 ? '✅' : '❌'} 🔴 老 expressMode 迁移成 expressEnabled：online→true，off/local/乱写/缺省→false，且删旧键落盘${fails.length ? '：' + fails.join('；') : ''}`)
   }
 
+  /* 「连接到MC」（2026-10-04）：服务器历史（全局）+ 注入提示词 */
+  {
+    const { mkdtempSync, readFileSync, existsSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { ServerHistory, SERVERS_FILE, MAX_SERVERS } = await import('./src/serverhistory.mjs')
+    const dir = mkdtempSync(join(tmpdir(), 'whale-srv-'))
+    const hist = new ServerHistory({ dir })
+    hist.record('a.example'); hist.record('b.example'); hist.record('a.example')
+    console.log(`  ${hist.list()[0] === 'a.example' && hist.list().length === 2 ? '✅' : '❌'} 服务器历史：去重 + 最近优先（${hist.list().join(', ')}）`)
+    for (let i = 0; i < 30; i++) hist.record(`s${i}.example`)
+    console.log(`  ${hist.list().length === MAX_SERVERS ? '✅' : '❌'} 封顶 ${MAX_SERVERS} 条（实得 ${hist.list().length}）`)
+    console.log(`  ${existsSync(join(dir, SERVERS_FILE)) ? '✅' : '❌'} 落盘在**全局**状态目录：${SERVERS_FILE}`)
+    hist.remove(hist.list()[0])
+    const reread = new ServerHistory({ dir })
+    console.log(`  ${reread.list().length === MAX_SERVERS - 1 ? '✅' : '❌'} 删除后重新读盘一致（${reread.list().length} 条）`)
+
+    const { buildConnectPrompt } = await import('./src/connect-prompt.mjs')
+    const p1 = buildConnectPrompt({ address: 'a.example:25566', account: 'DeepSeek (id: acc-1)' })
+    const p2 = buildConnectPrompt({ address: '192.168.1.5:54321', account: 'X (id: acc-2)', via: 'lan' })
+    console.log(`  ${p1.includes('a.example:25566') && p1.includes('acc-1') && !/local network/.test(p1) ? '✅' : '❌'} 提示词含地址 + 账户 \`名字 (id: …)\`；手动连接不追加局域网说明`)
+    console.log(`  ${/local network/.test(p2) ? '✅' : '❌'} 🔴 局域网触发才追加"该地址可能是临时的"`)
+
+    const isrc = readFileSync(new URL('./index.js', import.meta.url), 'utf8')
+    console.log(`  ${/path === '\/api\/mc\/servers'/.test(isrc) && /path === '\/api\/mc\/lan'/.test(isrc) && /path === '\/api\/mc\/connect'/.test(isrc) ? '✅' : '❌'} 三个新端点在 index.js（servers / lan / connect）`)
+    console.log(`  ${/flattenMotd\(ok \? ping\.motd : h\?\.motd\)\.replace\(\/\[\\r\\n\]\+\/g, ' '\)/.test(isrc) ? '✅' : '❌'} 局域网行的 MOTD **剥颜色码 + 换行符换成空格**再给前端`)
+    console.log(`  ${/path === '\/api\/mc\/servers' \|\| path === '\/api\/mc\/lan'/.test(isrc) && /path === '\/api\/mc\/connect'/.test(isrc) ? '✅' : '❌'} 🔴 三个都进了 /api/mc 分派（servers/lan 走转发名单、connect 内联；漏一个就 404，踩过）`)
+    console.log(`  ${/if \(via !== 'lan'\) serverHistory\.record\(address\)/.test(isrc) ? '✅' : '❌'} 🔴 只有**手动连接**才记历史（局域网直连不记）`)
+    console.log(`  ${/source: \{ kind: 'plugin:whale_craft', form: 'notice'/.test(isrc) && /agent\.steer\(message\)/.test(isrc) && /interruptWait\?\.\('connect'\)/.test(isrc) ? '✅' : '❌'} 🔴 对话中：连接注入走**插件提示行**（plugin:whale_craft/notice）+ steer`)
+    console.log(`  ${/asUser = body\.asUser === true/.test(isrc) && /\[system\] \$\{text\}/.test(isrc) && /source: \{ kind: 'user' \}/.test(isrc) ? '✅' : '❌'} 🔴 新对话页：改投**玩家消息**（source kind='user'、正文前加 [system] ）`)
+  }
+
   /* 受保护文件在记忆工具里：**可读不可写**（RULES.md / AGENTS.md / config.json 同一套，用户 2026-10-03 定）*/
   {
     const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs')
@@ -3544,8 +3580,8 @@ console.log('\n--- 客户端 bundle（client.js 静态检查）---')
     ['不做 document.body 级观察（老 bug 的根源）', !/observe\(document\.body/.test(code)],
     ['不做"卡片前面的兄弟"式位置猜测', !/findHeroRow/.test(code) && !/appendChild\(btn\)/.test(code)],
     ['注入锚点用宿主的稳定壳 data-slot=conversation.hero.agentPreset', /HERO_CHIP_ANCHOR = '\[data-slot="conversation\.hero\.agentPreset"\]'/.test(code)],
-    ['按钮插在模式芯片**右边**（afterend）', /insertAdjacentElement\('afterend', btn\)/.test(code)],
-    ['放置是幂等的（不会自己触发自己）', /btn\.previousElementSibling === anchor\) return/.test(code)],
+    ['按钮插在模式芯片**右边**（afterend）', /insertAdjacentElement\('afterend', e\.btn\)/.test(code)],
+    ['放置是幂等的（按 order 紧贴前驱，不自己触发自己）', /e\.btn\.previousElementSibling !== prev/.test(code) && /HERO_BTN_ORDER/.test(code)],
     // 🔴 2026-09-18 真机 bug：原来只观察 `[data-composer-card]`，而那个标记在**输入框自己**身上
     //    （`InputBar.tsx:429`），hero 行是它的**兄弟** ⇒ hero 行重渲染把按钮抹掉、观察者看不见
     //    ⇒ 再也补不回来（症状：工作区已选时首帧就在，所以"看着正常"；没选工作区时锚点晚出现 ⇒ 没按钮）。
@@ -3553,8 +3589,8 @@ console.log('\n--- 客户端 bundle（client.js 静态检查）---')
     ['观察目标是锚点所在父容器（hero 行与输入框的共同祖先）', /anchor\?\.parentElement\) return anchor\.parentElement/.test(code) && /querySelector\('\[data-composer-seat\]'\)/.test(code)],
     ['锚点晚出现时有上限重试（首帧拿不到也能补上）', /tries >= 10/.test(code) && /setTimeout\(tick, 300\)/.test(code)],
     ['观察真的挂上了', /observer\.observe\(target, \{ childList: true, subtree: true \}\)/.test(code)],
-    ['组件卸载就摘掉按钮', /btn\.remove\(\)/.test(code)],
-    ['注入由门控驱动（只有 show 为真才挂）', /if \(!show\) return undefined/.test(code) && /mountHeroChipButton\(/.test(code) && /ctl\.dispose\(\)/.test(code)],
+    ['组件卸载就摘掉按钮', /e\.btn\.remove\(\)/.test(code)],
+    ['注入由门控驱动（只有 show 为真才挂）', /if \(!show\) return undefined/.test(code) && /mountHeroButtons\(/.test(code) && /ctl\.dispose\(\)/.test(code)],
     // 🔴 2026-09-16 二轮事故：门控**不许依赖一次性网络请求**。
     //    第一版问 `/api/mc/mode`，浏览器在新接口上线前 HMR 拿到新客户端 → 404 →
     //    永久当成"非 MC 模式" → MC 模式里也没有按钮。
@@ -3588,6 +3624,31 @@ console.log('\n--- 客户端 bundle（client.js 静态检查）---')
     ['版本内置提示来自顶层 versionPrompt（无工作区也显示）', /versionPrompt, hasWorkspace,/.test(code) && /setVersionPrompt\(m\.versionPrompt/.test(code) && /本版本内置提示/.test(code)],
     // 🔴 「已保存」气泡：3s 自动消失、切标签页消失、关闭时清掉，且定时器清场（别在关窗后到点报错）
     ['已保存提示 3s 自动消失 + 定时器清场', /setTimeout\(\(\) => setSaved\(''\), 3000\)/.test(code) && /clearTimeout\(t\)/.test(code) && /setSaved\(''\); setTab\(t\.id\)/.test(code)],
+    // ── 「连接到MC」（2026-10-04）──
+    ['「连接到MC」标题条入口：order 40（在「设置」45 左边）+ 运行图标 + 文字', /'whale_craft-mc-connect', order: 40/.test(code) && /IconRunRegular/.test(code) && /'连接到MC'/.test(code)],
+    ['🔴 运行图标是**裸三角**（IconTriangleRightFillRegular，不要带圈的 play）', /IconRunRegular = primitives\.IconTriangleRightFillRegular/.test(code)],
+    ['账户「（来源）」用灰色渲染（data-wc-cn-src）', /data-wc-cn-src/.test(code) && /acctLabelNode/.test(code)],
+    ['弹窗**固定尺寸**（定死宽高）+ 底部 footer 贴底', /\[data-wc-cn-card\]\{[^}]*height:min\(82vh,600px\)/.test(code) && /data-wc-cn-foot/.test(code)],
+    ['🔴 运行图标是**空心**三角（DSH 裸三角几何 + CSS 描边覆盖 fill）', /\.wc-runicon path\{fill:none;stroke:currentColor/.test(code) && /function RunIcon/.test(code)],
+    ['窗口固定 760×600、内容垂直居中并**上移 10%**（padding 24/52/84）', /\[data-wc-cn-card\]\{[^}]*width:min\(760px,100%\)/.test(code) && /\[data-wc-cn-body\]\{position:relative;[^}]*padding:24px 52px 84px/.test(code) && /justify-content:center/.test(code)],
+    ['🔴 运行图标按**图形自身**略微放大（transform-box:fill-box + scale(1.35)）——不放满，免得太粗大', /transform-box:fill-box;transform-origin:center;transform:scale\(1\.35\)/.test(code)],
+    ['探测中：方块一行、文案一行（各占一行、水平居中）', /\[data-wc-cn-probe\]\{display:flex;flex-direction:column/.test(code) && /data-wc-cn-dots/.test(code)],
+    ['局域网卡显示 **MOTD**（地址右边、灰、固定两行、**文字垂直居中**）', /data-wc-cn-motd/.test(code) && /data-wc-cn-motdtext/.test(code) && /-webkit-line-clamp:2/.test(code) && /\[data-wc-cn-motd\]\{[^}]*display:flex;align-items:center/.test(code)],
+    ['按钮里的运行图标用**负外边距**收掉方框透明边（不然左边距看着很大）', /\[data-wc-btn\] \.wc-runicon\{margin-left:-4px/.test(code)],
+    ['🔴 局域网卡片整体是按钮，运行图标**无缝嵌入**（不再是独立按钮）', /'data-wc-cn-lan': ''/.test(code) && /data-wc-cn-run/.test(code) && !/\['data-wc-cn-lan'\] \[data-wc-cn-actions\]/.test(code)],
+    ['局域网行：**版本号在人数左边**，各自可标红（data-wc-cn-bad）', /data-wc-cn-ver/.test(code) && /data-wc-cn-count/.test(code) && /data-wc-cn-bad/.test(code)],
+    ['版本支持范围**预留**（MC_VERSION_IN_RANGE 未实现 → null，按在范围内处理）', /const MC_VERSION_IN_RANGE = \(\) => null/.test(code)],
+    ['版本不符 / 人满 → 点它弹错误框且**不发起连接**', /const clickLan/.test(code) && /版本不匹配/.test(code) && /服务器已满/.test(code)],
+    ['🔴 新对话页走**模拟玩家发言**（asUser + `[system] `）；对话中仍用插件提示行', /asUser: true/.test(code) && /asUser: false/.test(code) && /asUser: props\?\.asUser === true/.test(code)],
+    ['输入框 box-sizing:border-box（否则比按钮高一点点）', /\[data-wc-cn-input\]\{box-sizing:border-box/.test(code)],
+    ['地址行输入框与「连接」按钮**等高**（34px）', /\[data-wc-cn-input\]\{[^}]*height:34px/.test(code) && /\[data-wc-cn-actions\]\{[^}]*height:34px/.test(code)],
+    ['错误提示**浮在地址上方留白**且 3s 自动消失', /data-wc-cn-error/.test(code) && /setTimeout\(\(\) => setError\(''\), 3000\)/.test(code)],
+    ['标题条入口：MC 模式门控 + **在游戏中隐藏**', /function McConnectEntry/.test(code) && /useMcSettingsGate\(props, false\)/.test(code) && /st\?\.active === true\) return null/.test(code)],
+    ['hero 两个按钮按 order 排（连接 40 在左、设置 45 在右；设置只有图标）', /HERO_CONNECT_ATTR\]: 40/.test(code) && /HERO_BTN_ATTR\]: 45/.test(code) && /iconOnly: true/.test(code) && /getDisabled: isOff/.test(code)],
+    ['连接弹窗：历史气泡横滚 + 局域网行 + 账户下拉 + 预留选项区', /data-wc-cn-bubbles/.test(code) && /data-wc-cn-lan\b/.test(code) && /data-wc-cn-pick/.test(code) && /data-wc-cn-extras/.test(code) && /添加\/管理/.test(code)],
+    ['探测动画三方块**只动 opacity**（呼吸灯，非形变）', /@keyframes wc-breathe\{0%,100%\{opacity:\.2;\}50%\{opacity:1;\}\}/.test(code) && /data-wc-cn-dot/.test(code) && /animation:wc-breathe 1\.4s/.test(code)],
+    ['局域网行直连不填输入框、不记历史（via:\'lan\'）', /connect\(s\.address, 'lan'\)/.test(code)],
+    ['「添加/管理」→ 叠加受控设置弹窗并落到「账户」页', /setSettingsOpen\(true\)/.test(code) && /initialTab: 'accounts'/.test(code) && /nested: true/.test(code) && /data-wc-nested/.test(code)],
     // 服务端口径（读 index.js，别拿 client 的 src 判）
     ['服务端不再因没工作区把 mcMode 压成 false（改报 hasWorkspace）', (() => {
       const isrc = readFileSync(new URL('./index.js', import.meta.url), 'utf8')
@@ -3595,7 +3656,7 @@ console.log('\n--- 客户端 bundle（client.js 静态检查）---')
         && /sendJson\(res, 200, \{ ok: true, sessionId, mcMode, mcPlus, hasWorkspace, diag \}\)/.test(isrc)
         && !/if \(agent && !workspaceOf\(agent\) && isMcModeAgent\(agent\)\) \{ mcMode = false/.test(isrc)
     })()],
-    ['设置接口全都带上 sessionId（服务端要用它定位工作区）', /const withSid = \(p\) =>/.test(code) && /apiGet\(withSid\('\/api\/mc\/accounts'\)\)/.test(code) && /apiPatch\(withSid\('\/api\/mc\/config'\)/.test(code) && !/api(Get|Patch|Post|Delete)\('\/api\/mc\/(accounts|config|authservers)'/.test(code)],
+    ['设置接口全都带上 sessionId（服务端要用它定位工作区）', /const withSid = \(p\) =>/.test(code) && /apiGet\(withSid\('\/api\/mc\/accounts'\)\)/.test(code) && /apiPatch\(withSid\('\/api\/mc\/config'\)/.test(code) && !/api(Get|Patch|Post|Delete)\('\/api\/mc\/(config|authservers)'/.test(code)],
     // 🔴 门控名单走**专门的小接口**（不需要工作区）：用 /api/mc/config 会被闸门拒 → 静默退回兜底名单
     ['前端门控名单取 /api/mc/presets（不带 sessionId）', /fetch\('\/api\/mc\/presets'/.test(code) && !/fetch\('\/api\/mc\/config'/.test(code)],
     // 🔴 2026-09-16 真机 bug：两个入口都把模态框写成 `createElement(McSettingsModal, null)`

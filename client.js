@@ -57,6 +57,8 @@ window.__ModuleLoader__.load({
     let IconSettingsOutlineRegular = null
     let IconFolderOpenRegular = null
     let IconCloseOutlineRegular = null
+    let IconRunRegular = null
+    let IconChevronDownOutlineRegular = null
     let createRoot = null
     try {
       const primitives = require('@deepseek-ai/dsh-client-ui-primitives')
@@ -65,6 +67,9 @@ window.__ModuleLoader__.load({
       IconFolderOpenRegular = primitives.IconFolderOpenRegular
       // 弹窗右上角关闭按钮的叉图标（与 DSH 原生弹窗同款）。
       IconCloseOutlineRegular = primitives.IconCloseOutlineRegular
+      // 「运行」图标 = **裸的实心向右三角**（不要外圈/描边）——「连接到MC」按钮与弹窗里的「连接」都用它。
+      IconRunRegular = primitives.IconTriangleRightFillRegular
+      IconChevronDownOutlineRegular = primitives.IconChevronDownOutlineRegular
       // hero 那个「设置」按钮是**纯 DOM**（不是 React 渲染的），拿不到 React 组件本身；
       // 借 react-dom 的一个小根把图标渲染进按钮，图标仍出自同一套官方图标集（不另画、不搬路径）。
       createRoot = require('react-dom/client').createRoot
@@ -144,6 +149,106 @@ window.__ModuleLoader__.load({
   color:var(--dsw-alias-label-primary);}
 [data-wc-xbtn]:hover{color:var(--dsw-alias-state-error-primary);}
 [data-wc-xbtn]:disabled{opacity:.5;cursor:default;}
+/* ── 「连接到MC」弹窗（2026-10-04）────────────────────────────────────── */
+[data-wc-cn-overlay]{position:fixed;inset:0;z-index:1000;background:var(--dsw-alias-bg-mask-1,rgba(0,0,0,.45));
+  display:flex;align-items:center;justify-content:center;padding:24px;}
+/* 叠加在「连接到MC」之上的设置弹窗：更高一层 */
+[data-wc-overlay][data-wc-nested]{z-index:1200;}
+/* **固定窗口**（用户要求）：宽高定死；上方留白、底部 footer 贴底 */
+[data-wc-cn-card]{position:relative;display:flex;flex-direction:column;width:min(760px,100%);
+  height:min(82vh,600px);overflow:hidden;border-radius:20px;
+  background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1));color:var(--dsw-alias-label-primary);
+  box-shadow:var(--dsw-elevation-prominent,0 12px 32px rgba(0,0,0,.28));}
+/* 内容整体垂直居中，再**上移约 10%**（用户要求）；顶部那点空给浮层错误提示 */
+[data-wc-cn-body]{position:relative;flex:1;min-height:0;overflow:auto;padding:24px 52px 84px;
+  display:flex;flex-direction:column;justify-content:center;gap:10px;}
+[data-wc-cn-foot]{flex:none;padding:10px 24px 14px;
+  border-top:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.2));}
+/* 连接出错：**浮在地址上方的留白里**，3s 自动消失（定时器见组件） */
+[data-wc-cn-error]{position:absolute;top:7px;left:36px;right:36px;z-index:2;
+  padding:5px 10px;border-radius:8px;font-size:12px;line-height:18px;word-break:break-word;
+  background:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-label-primary-foreground,#fff);}
+/* 「运行」图标：DSH 裸三角几何 → **描边成空心**（不要实心、不要外圈）。
+ * 🔴 那个三角在 16×16 viewBox 里只占中间一小块（约 5.7×8），所以默认渲染**又小、四周全是透明边**。
+ *    → 用 transform-box:fill-box 按**图形自身**略微放大（**不能放太满**，否则比设置图标还大）。 */
+.wc-runicon{overflow:visible;}
+.wc-runicon path{fill:none;stroke:currentColor;stroke-width:1.1;stroke-linejoin:round;
+  transform-box:fill-box;transform-origin:center;transform:scale(1.35);vector-effect:non-scaling-stroke;}
+/* 三角在方框里左右还各留一截透明边 → 放在按钮里会把左边距撑大；用负外边距把它收回去 */
+[data-wc-btn] .wc-runicon{margin-left:-4px;margin-right:-2px;}
+[data-wc-cn-fieldlabel]{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);margin-bottom:4px;}
+[data-wc-cn-row]{display:flex;gap:8px;align-items:center;}
+/* box-sizing:border-box —— 否则 1px 边框会让输入框比旁边的按钮**高一点点** */
+[data-wc-cn-input]{box-sizing:border-box;flex:1;min-width:0;height:34px;padding:0 10px;border-radius:8px;font:inherit;font-size:13px;
+  border:1px solid var(--dsw-alias-border-l3,var(--dsw-alias-border-l2,rgba(128,128,128,.28)));
+  background:var(--dsw-alias-bg-layer-1,transparent);color:var(--dsw-alias-label-primary);outline:none;}
+[data-wc-cn-input]:focus{border-color:var(--dsw-alias-state-business-primary,#4a8cff);}
+/* 历史气泡行：**不换行、左右滚** */
+[data-wc-cn-bubbles]{display:flex;flex-wrap:nowrap;gap:8px;overflow-x:auto;padding-bottom:2px;}
+[data-wc-cn-bubble]{flex:none;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 6px 0 12px;
+  border-radius:999px;background:var(--dsw-alias-bg-overlay,rgba(128,128,128,.14));
+  font-size:12px;white-space:nowrap;color:var(--dsw-alias-label-primary);}
+[data-wc-cn-bubblex]{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;padding:0;
+  border:0;background:transparent;border-radius:999px;cursor:pointer;color:var(--dsw-alias-label-tertiary);}
+[data-wc-cn-bubblex]:hover{background:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-label-primary-foreground,#fff);}
+/* 探测中：三方块一行、文案另起一行（**各占一行**，都水平居中） */
+[data-wc-cn-probe]{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:10px 0;
+  color:var(--dsw-alias-label-tertiary);font-size:12px;}
+[data-wc-cn-dots]{display:flex;align-items:center;gap:8px;}
+[data-wc-cn-dot]{width:8px;height:8px;border-radius:2px;background:currentColor;opacity:.2;
+  animation:wc-breathe 1.4s ease-in-out infinite;}
+[data-wc-cn-dot]:nth-child(2){animation-delay:.2s;}
+[data-wc-cn-dot]:nth-child(3){animation-delay:.4s;}
+@keyframes wc-breathe{0%,100%{opacity:.2;}50%{opacity:1;}}
+/* 局域网行区：限高滚动，与下方「选项」栏留距 */
+[data-wc-cn-lans]{max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;margin-bottom:4px;}
+/* 🔴 整张卡片**就是一个按钮**；运行图标**无缝嵌在里面**（不单独做按钮、没有自己的底色） */
+[data-wc-cn-lan]{display:flex;align-items:center;gap:12px;width:100%;min-height:44px;padding:6px 12px;
+  border:0;border-radius:10px;background:transparent;cursor:pointer;font:inherit;text-align:left;
+  color:var(--dsw-alias-label-primary);transition:background .12s;}
+[data-wc-cn-lan]:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));}
+[data-wc-cn-lan]:disabled{opacity:.6;cursor:default;}
+[data-wc-cn-chip]{flex:none;font-size:11px;line-height:18px;padding:0 8px;border-radius:999px;
+  background:var(--dsw-alias-bg-overlay,rgba(128,128,128,.16));color:var(--dsw-alias-label-secondary);}
+[data-wc-cn-addr]{flex:none;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:13px;color:var(--dsw-alias-label-primary);}
+/* MOTD：地址**右边**、灰色、**固定两行**。
+ * 🔴 外层只负责"占两行高度 + **把文字垂直居中**"（否则单行 MOTD 会贴在 2 行框的顶部，看着比地址偏上） */
+[data-wc-cn-motd]{flex:1;min-width:0;margin-left:14px;display:flex;align-items:center;
+  min-height:32px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:16px;}
+[data-wc-cn-motdtext]{width:100%;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;}
+[data-wc-cn-count]{flex:none;font-size:12px;color:var(--dsw-alias-state-success-primary);}
+/* 版本号（玩家数左边）：在支持范围内绿、超出红 */
+[data-wc-cn-ver]{flex:none;font-size:12px;color:var(--dsw-alias-state-success-primary);}
+[data-wc-cn-ver][data-wc-cn-bad],[data-wc-cn-count][data-wc-cn-bad]{color:var(--dsw-alias-state-error-primary);}
+[data-wc-cn-run]{flex:none;display:inline-flex;align-items:center;color:var(--dsw-alias-label-secondary);}
+[data-wc-cn-lan]:hover [data-wc-cn-run]{color:var(--dsw-alias-label-primary);}
+/* 「连接」/ 局域网行的运行按钮：地址行那个与输入框**等高**（34px） */
+[data-wc-cn-actions]{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;
+  padding:0 12px;border:0;border-radius:8px;cursor:pointer;font-size:12px;font-family:inherit;line-height:1;
+  background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14));color:var(--dsw-alias-label-primary);white-space:nowrap;}
+[data-wc-cn-actions]:hover{background:var(--dsw-alias-state-business-primary,#4a8cff);
+  color:var(--dsw-alias-label-primary-foreground,#fff);}
+[data-wc-cn-actions]:disabled{opacity:.5;cursor:default;}
+/* 底部配置行 */
+[data-wc-cn-config]{display:flex;gap:20px;align-items:flex-start;}
+/* 账户名后面的「（来源）」要**灰** */
+[data-wc-cn-src]{color:var(--dsw-alias-label-tertiary);}
+[data-wc-cn-pick]{position:relative;min-width:200px;}
+[data-wc-cn-pickbtn]{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;height:32px;
+  padding:0 10px;border-radius:8px;font:inherit;font-size:13px;cursor:pointer;
+  border:1px solid var(--dsw-alias-border-l3,var(--dsw-alias-border-l2,rgba(128,128,128,.28)));
+  background:var(--dsw-alias-bg-layer-1,transparent);color:var(--dsw-alias-label-primary);}
+/* 下拉菜单**向上**展开：这一行在弹窗底部，向下会被卡片/滚动区裁掉 */
+[data-wc-cn-menu]{position:absolute;left:0;right:0;bottom:calc(100% + 4px);z-index:5;max-height:240px;overflow:auto;
+  border-radius:10px;padding:4px;background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-layer-2));
+  box-shadow:var(--dsw-elevation-prominent,0 8px 24px rgba(0,0,0,.3));}
+[data-wc-cn-item]{display:block;width:100%;text-align:left;padding:7px 10px;border:0;border-radius:6px;
+  background:transparent;cursor:pointer;font:inherit;font-size:13px;color:var(--dsw-alias-label-primary);}
+[data-wc-cn-item]:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14));}
+[data-wc-cn-item][data-wc-cn-manage]{color:var(--dsw-alias-label-tertiary);}
+[data-wc-cn-extras]{flex:1;min-width:0;}
+
 /* 注入开关 label 里的文件名：文件不存在 → 斜体灰删除线（hover 提示见 title） */
 [data-wc-filename]{font-weight:400;}
 [data-wc-filename][data-wc-missing]{font-style:italic;color:var(--dsw-alias-label-tertiary);
@@ -316,6 +421,20 @@ select[data-wc-in]{appearance:none;padding-right:22px;
       },
     }
     const openSettings = () => settingsBus.emit()
+    /** 同款总线：「连接到MC」的 hero 按钮也是纯 DOM，用它叫醒 React 侧的模态框 */
+    const connectBus = {
+      listeners: new Set(),
+      subscribe(fn) {
+        this.listeners.add(fn)
+        return () => { this.listeners.delete(fn) }
+      },
+      emit() {
+        for (const fn of Array.from(this.listeners)) {
+          try { fn() } catch (e) { /* 单个订阅者出错不影响别人 */ }
+        }
+      },
+    }
+    const openConnect = () => connectBus.emit()
 
     /* ==================================================================
      * 接口小工具（契约见 index.js 的 /api/mc/accounts 等路由）
@@ -674,6 +793,47 @@ select[data-wc-in]{appearance:none;padding-right:22px;
     }
 
     /* ==================================================================
+     * 「连接到MC」入口①：**标题条**按钮（order 40，落在「设置」左边）
+     * ----------------------------------------------------------------
+     * 门控与「设置」一致（MC 模式，本地 preset 判定）；**在游戏中时隐藏**。
+     * 按钮 = 运行图标 + 文字「连接到MC」。受控打开 `McConnectModal`。
+     * ================================================================== */
+    function McConnectEntry(props) {
+      const sid = props?.sessionId ?? props?.session?.id ?? null
+      const show = useMcSettingsGate(props, false)
+      // 只在"要显示"时才轮询状态（非 MC 会话别白轮询）
+      const [st] = useMcStatus(show ? sid : null)
+      const [open, setOpen] = React.useState(false)
+      if (!show) return null
+      if (st?.active === true) return null          // 在游戏中 → 隐藏
+      return React.createElement(
+        React.Fragment,
+        null,
+        React.createElement('button', {
+          type: 'button',
+          'data-wc-btn': '',
+          title: '连接到MC：填地址或选局域网服务器',
+          onClick: () => setOpen(true),
+        },
+        React.createElement(RunIcon, { size: 15 }),
+        '连接到MC'),
+        React.createElement(McConnectModal, { open, onClose: () => setOpen(false), sessionId: sid, asUser: false }),
+      )
+    }
+
+    /**
+     * 「连接到MC」的 React 宿主：给 hero 的纯 DOM 按钮用（订阅 connectBus）。
+     * 🔴 **新对话页**：提示词注入在新会话里不灵 → 改走"**模拟玩家发言**"（`asUser: true`，
+     *    正文前加 `[system] `）；对话中（标题条那个）仍走插件提示行。
+     */
+    function McConnectHost(props) {
+      const [open, setOpen] = React.useState(false)
+      React.useEffect(() => connectBus.subscribe(() => setOpen(true)), [])
+      const sessionId = props?.sessionId ?? props?.session?.id ?? null
+      return React.createElement(McConnectModal, { open, onClose: () => setOpen(false), sessionId, asUser: true })
+    }
+
+    /* ==================================================================
      * 「MC设置」入口③：**插件页 → whale_craft 详情页**头部的按钮（2026-10-04，演示）
      * ----------------------------------------------------------------
      * 插件管理页的 `plugins.detail.actions` 插槽是 **root 作用域**（无会话、无工作区），
@@ -735,54 +895,69 @@ select[data-wc-in]{appearance:none;padding-right:22px;
      * ================================================================== */
     const HERO_CHIP_ANCHOR = '[data-slot="conversation.hero.agentPreset"]'
     const HERO_BTN_ATTR = 'data-whale-craft-mc-settings'
+    const HERO_CONNECT_ATTR = 'data-whale-craft-mc-connect'
+    /** hero 行里我们注入的按钮：属性 → 排序（小的靠左）。锚点右边依次是 连接(40) → 设置(45)。 */
+    const HERO_BTN_ORDER = { [HERO_CONNECT_ATTR]: 40, [HERO_BTN_ATTR]: 45 }
 
     /**
-     * 把「MC设置」按钮插到 hero 行里模式芯片的右边。
-     * @param onClick 点击回调（只 emit 一个空标记，DOM 里不放任何账户/凭据信息）
-     * @param getDisabled 读"当前是否该禁用"（**明确没有工作区**时禁用；拿不准就返回 false 放行）
+     * 把我们的按钮插到 hero 行里模式芯片（锚点）的**右边**，按 {@link HERO_BTN_ORDER} 升序。
+     * @param {Array<{attr:string, label:string, title:string, icon?:Function, iconOnly?:boolean,
+     *   onClick:()=>void, getDisabled?:()=>boolean, disabledTitle?:string}>} specs
      * @returns `{ dispose, refresh }`：dispose 断开观察者并摘掉按钮；refresh 重算禁用态（不重建 DOM）
      */
-    function mountHeroChipButton(onClick, getDisabled) {
-      const btn = document.createElement('button')
-      btn.type = 'button'
-      btn.setAttribute(HERO_BTN_ATTR, '')
-      btn.setAttribute('data-wc-btn', '')
-      btn.setAttribute('data-wc-icon', '')
-      btn.setAttribute('data-wc-tiny', '')
-      btn.title = 'MC设置：账户、提示词与指令白名单'
-      btn.setAttribute('aria-label', 'MC设置')
-      // 只放图标（与标题条入口、详情页按钮同款，同出自 DSH 官方图标集）。这个按钮是
-      // **纯 DOM**、拿不到 React 组件，所以借 react-dom 的一个小根把图标渲染进来；
-      // 渲染不到（理论上不该发生）就退回文字，别让按钮变空白。
-      let iconRoot = null
-      if (IconSettingsOutlineRegular && createRoot) {
-        iconRoot = createRoot(btn)
-        iconRoot.render(React.createElement(IconSettingsOutlineRegular, { size: 16 }))
-      } else {
-        btn.textContent = 'MC设置'
-      }
-      btn.addEventListener('click', onClick)
-      // 禁用态：新会话页"只要是 MC/MC+ 就显示"，但**没选工作区时点不动**。
-      // 三态由调用方判（`=== false` 才禁用；null = 还不知道，放行）。
-      const refresh = () => {
-        const off = typeof getDisabled === 'function' && getDisabled() === true
-        btn.disabled = off
-        btn.title = off ? '请先选择工作区' : 'MC设置：账户、提示词与指令白名单'
-      }
-      refresh()
+    function mountHeroButtons(specs) {
+      const entries = specs.map((s) => {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.setAttribute(s.attr, '')
+        btn.setAttribute('data-wc-btn', '')
+        btn.setAttribute('data-wc-tiny', '')
+        if (s.iconOnly) btn.setAttribute('data-wc-icon', '')   // 只有图标 → 收成正方形
+        btn.title = s.title
+        btn.setAttribute('aria-label', s.label ?? s.title)
+        // 纯 DOM 按钮拿不到 React 组件，借 react-dom 的小根把内容渲染进去（图标 + 可选文字）；
+        // 渲染不到（理论上不该发生）就退回纯文字，别让按钮变空白。
+        let iconRoot = null
+        if ((s.icon || s.label) && createRoot) {
+          iconRoot = createRoot(btn)
+          iconRoot.render(React.createElement(
+            React.Fragment, null,
+            s.icon ? React.createElement(s.icon, { size: 16 }) : null,
+            (s.iconOnly || !s.label) ? null : React.createElement('span', null, s.label),
+          ))
+        } else {
+          btn.textContent = s.label ?? ''
+        }
+        btn.addEventListener('click', s.onClick)
+        // 禁用态：新会话页"只要是 MC/MC+ 就显示"，但**没选工作区时点不动**。
+        // 三态由调用方判（`=== false` 才禁用；null = 还不知道，放行）。
+        const refresh = () => {
+          const off = typeof s.getDisabled === 'function' && s.getDisabled() === true
+          btn.disabled = off
+          btn.title = off ? (s.disabledTitle ?? s.title) : s.title
+        }
+        refresh()
+        return { btn, attr: s.attr, refresh, iconRoot }
+      })
+      const ordered = entries.slice().sort((a, b) => (HERO_BTN_ORDER[a.attr] ?? 99) - (HERO_BTN_ORDER[b.attr] ?? 99))
+      const refresh = () => { for (const e of entries) e.refresh() }
 
       /**
-       * 幂等放置：已经在锚点后面就什么都不做（否则会自己触发自己）。
-       * 🔴 只认**真 anchor 的直接父元素**作为落点：`mountHeroChipButton` 契约里
-       *    anchor 是 `display:contents` 的插槽壳（`HERO_CHIP_ANCHOR`），只用它比对身份。
+       * 幂等放置：按 order 依次**紧贴前一个**地排在锚点后面（每个按钮必须紧跟它的前驱）。
+       * 🔴 只认**真 anchor 的直接父元素**作为落点（`HERO_CHIP_ANCHOR`），只用它比对身份。
        *    任何"往上找兄弟行"式的猜测都被 2026-09-16 的事故否掉了 —— 不重蹈。
        */
       const place = () => {
         const anchor = document.querySelector(HERO_CHIP_ANCHOR)
         const row = anchor === null ? null : anchor.parentElement
         if (anchor === null || row === null) return
-        if (btn.parentElement === row && btn.previousElementSibling === anchor) return
-        anchor.insertAdjacentElement('afterend', btn)
+        let prev = anchor
+        for (const e of ordered) {
+          if (e.btn.parentElement !== row || e.btn.previousElementSibling !== prev) {
+            prev.insertAdjacentElement('afterend', e.btn)
+          }
+          prev = e.btn
+        }
       }
 
       place()
@@ -836,8 +1011,10 @@ select[data-wc-in]{appearance:none;padding-right:22px;
       const dispose = () => {
         if (retry) clearTimeout(retry)
         observer.disconnect()
-        if (iconRoot) iconRoot.unmount()
-        btn.remove()
+        for (const e of entries) {
+          if (e.iconRoot) e.iconRoot.unmount()
+          e.btn.remove()
+        }
       }
       return { dispose, refresh }
     }
@@ -864,11 +1041,23 @@ select[data-wc-in]{appearance:none;padding-right:22px;
 
       React.useEffect(() => {
         if (!show) return undefined
-        const ctl = mountHeroChipButton(() => {
-          // 兜底：拿不准（null）时按钮没禁用，点到这儿再拦一次。
+        // 兜底：拿不准（null）时按钮没禁用，点到这儿再拦一次。
+        const guard = (fn) => () => {
           if (wsReadyRef.current === false) { window.alert(NO_WORKSPACE_TIP); return }
-          openSettings()
-        }, () => wsReadyRef.current === false)
+          fn()
+        }
+        const isOff = () => wsReadyRef.current === false
+        // 两个按钮按 order 排在模式芯片右边：连接(40) 在左、设置(45) 在右
+        const ctl = mountHeroButtons([
+          {
+            attr: HERO_CONNECT_ATTR, label: '连接到MC', title: '连接到MC：填地址或选局域网服务器',
+            icon: RunIcon, disabledTitle: '请先选择工作区', getDisabled: isOff, onClick: guard(openConnect),
+          },
+          {
+            attr: HERO_BTN_ATTR, label: 'MC设置', title: 'MC设置：账户、提示词与指令白名单',
+            icon: IconSettingsOutlineRegular, iconOnly: true, disabledTitle: '请先选择工作区', getDisabled: isOff, onClick: guard(openSettings),
+          },
+        ])
         ctlRef.current = ctl
         return () => { ctlRef.current = null; ctl.dispose() }
       }, [show])
@@ -877,7 +1066,12 @@ select[data-wc-in]{appearance:none;padding-right:22px;
       React.useEffect(() => { if (ctlRef.current) ctlRef.current.refresh() }, [wsReady, show])
 
       if (!show) return null
-      return React.createElement(McSettingsModal, { ...props, wsCwd })
+      return React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(McSettingsModal, { ...props, wsCwd }),
+        React.createElement(McConnectHost, props),
+      )
     }
 
     /* ==================================================================
@@ -889,7 +1083,7 @@ select[data-wc-in]{appearance:none;padding-right:22px;
      * ================================================================== */
     function purgeLegacyInjectedButtons() {
       try {
-        for (const el of document.querySelectorAll('[data-whale-craft-mc-settings]')) el.remove()
+        for (const el of document.querySelectorAll('[data-whale-craft-mc-settings],[data-whale-craft-mc-connect]')) el.remove()
       } catch (e) { /* 清理失败无所谓，不影响任何功能 */ }
     }
 
@@ -920,6 +1114,22 @@ select[data-wc-in]{appearance:none;padding-right:22px;
      * 文件名（用在注入开关的 label 里）。文件不存在时：斜体 + 灰 + 删除线，hover 提示原因。
      * 只是**提示**，不影响开关可用性（开关始终用于改配置）。
      */
+    /**
+     * **预留**：判断一个 MC 版本号是否在本插件支持范围内。
+     * 目前**未实现** → 返回 `null`（未知），调用方按"在范围内"处理（版本号显示绿色）。
+     * 实现后应返回 `true` / `false`；`false` → 版本号标红，点它弹错误框。
+     */
+    const MC_VERSION_IN_RANGE = () => null
+
+    /**
+     * 「运行」图标 = DSH 裸三角（`IconTriangleRightFillRegular` 的几何）**描边成空心**
+     * （用户 2026-10-04：要**空心三角**，不要带外圈的 play）。靠 `className` 覆盖 path 的 fill。
+     */
+    function RunIcon(props) {
+      if (!IconRunRegular) return null
+      return h(IconRunRegular, { size: props?.size ?? 16, className: 'wc-runicon' })
+    }
+
     function FileName(props) {
       const missing = props.missing === true
       return h('span', missing
@@ -1553,6 +1763,211 @@ select[data-wc-in]{appearance:none;padding-right:22px;
       { id: 'share', label: '文件分享' },
     ]
 
+    /* ==================================================================
+     * 「连接到MC」模态框（2026-10-04）
+     * ----------------------------------------------------------------
+     * 受控（`open` / `onClose`）。点「连接」或点局域网行 →
+     *   `POST /api/mc/connect`：**插件注入提示词并让该会话跑一轮**（真正的连接由 LLM 去调
+     *   `mc_connect`）；本组件**不自己连**。历史只记**手动输入**的地址，局域网直连不记。
+     * 「添加/管理」→ 在**本弹窗之上**叠一个受控的设置弹窗（`initialTab='accounts'`）。
+     * ================================================================== */
+    function McConnectModal(props) {
+      const open = props?.open === true
+      const sessionId = props?.sessionId ?? null
+      const [address, setAddress] = React.useState('')
+      const [servers, setServers] = React.useState([])
+      const [accts, setAccts] = React.useState([])
+      const [accountId, setAccountId] = React.useState('')
+      const [acctOpen, setAcctOpen] = React.useState(false)
+      const [lan, setLan] = React.useState(null)          // null = 探测中
+      const [busy, setBusy] = React.useState(false)
+      const [error, setError] = React.useState('')
+      const [settingsOpen, setSettingsOpen] = React.useState(false)
+      const pickRef = React.useRef(null)
+
+      // 打开时：拉账户 + 历史，并发探测局域网（关闭就丢弃结果）
+      React.useEffect(() => {
+        if (!open) return undefined
+        let alive = true
+        setError(''); setLan(null)
+        apiGet('/api/mc/accounts').then((a) => {
+          if (!alive) return
+          const list = Array.isArray(a.accounts) ? a.accounts : []
+          setAccts(list)
+          setAccountId((cur) => cur || a.defaultAccount || list[0]?.innerID || '')
+        }).catch(() => { /* 账户拉不到就不显示账户选择 */ })
+        apiGet('/api/mc/servers').then((s) => { if (alive) setServers(Array.isArray(s.servers) ? s.servers : []) }).catch(() => {})
+        apiPost('/api/mc/lan', {}).then((r) => { if (alive) setLan(Array.isArray(r.servers) ? r.servers : []) })
+          .catch(() => { if (alive) setLan([]) })
+        return () => { alive = false }
+      }, [open])
+
+      // 账户下拉：点外面 / Esc 关掉
+      React.useEffect(() => {
+        if (!acctOpen) return undefined
+        const onDown = (e) => { if (pickRef.current && !pickRef.current.contains(e.target)) setAcctOpen(false) }
+        const onKey = (e) => { if (e.key === 'Escape') setAcctOpen(false) }
+        document.addEventListener('mousedown', onDown)
+        document.addEventListener('keydown', onKey)
+        return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+      }, [acctOpen])
+
+      // Esc 关弹窗（叠着设置弹窗时交给设置弹窗自己关）
+      React.useEffect(() => {
+        if (!open || settingsOpen) return undefined
+        const onKey = (e) => { if (e.key === 'Escape') props.onClose?.() }
+        document.addEventListener('keydown', onKey)
+        return () => document.removeEventListener('keydown', onKey)
+      }, [open, settingsOpen, props?.onClose])
+
+      // 出错提示：**3s 自动消失**（定时器随 error 变化 / 卸载清掉，别在关窗后到点报错）
+      React.useEffect(() => {
+        if (!error) return undefined
+        const t = setTimeout(() => setError(''), 3000)
+        return () => clearTimeout(t)
+      }, [error])
+
+      if (!open) return null
+
+      const closeAll = () => { if (typeof props.onClose === 'function') props.onClose() }
+      const refreshHistory = () => apiGet('/api/mc/servers')
+        .then((s) => setServers(Array.isArray(s.servers) ? s.servers : [])).catch(() => {})
+      const connect = (addr, via) => {
+        const a = String(addr ?? '').trim()
+        if (!a) { setError('请先填服务器地址'); return }
+        setBusy(true); setError('')
+        apiPost('/api/mc/connect', { sessionId, address: a, accountId, via, asUser: props?.asUser === true })
+          .then(() => { if (via !== 'lan') refreshHistory(); closeAll() })
+          .catch((e) => setError(errorText(e)))
+          .finally(() => setBusy(false))
+      }
+      const removeServer = (addr) => apiDelete('/api/mc/servers', { address: addr })
+        .then((r) => setServers(Array.isArray(r.servers) ? r.servers : []))
+        .catch((e) => setError(errorText(e)))
+      // 账户显示：`名字（来源）` —— **「（来源）」用灰色**（用户 2026-10-04）
+      const acctLabelNode = (a) => h('span', null,
+        a.name,
+        h('span', { 'data-wc-cn-src': '' }, `（${(ACCT_TYPE[a.type] ?? {}).label ?? a.type}）`))
+      const current = accts.find((x) => x.innerID === accountId)
+      // 局域网行：满了 / 版本不支持 → 标红；点它**直接连接**（不填输入框、不记历史）
+      const lanFull = (s) => Boolean(s?.players && s.players.max != null && s.players.online != null && s.players.online >= s.players.max)
+      const lanVersionOk = (s) => MC_VERSION_IN_RANGE(s?.version) !== false
+      const clickLan = (s) => {
+        if (!lanVersionOk(s)) { setError(`版本不匹配：这台服务器是 ${s.version}，当前插件还不支持`); return }
+        if (lanFull(s)) { setError(`服务器已满：${s.players.online}/${s.players.max}`); return }
+        connect(s.address, 'lan')
+      }
+
+      return h(React.Fragment, null,
+        h('div', {
+          'data-wc-cn-overlay': '', role: 'presentation',
+          onClick: closeAll,
+          onMouseDown: (e) => { if (e.target === e.currentTarget) e.preventDefault() },
+        },
+        h('div', {
+          'data-wc-cn-card': '', role: 'dialog', 'aria-modal': 'true', 'aria-label': '连接到MC',
+          onClick: (e) => e.stopPropagation(),
+        },
+        h('div', { 'data-wc-head': '' },
+          h('div', { 'data-wc-titlewrap': '' },
+            h('div', { 'data-wc-titleline': '' }, h('span', { 'data-wc-title': '' }, '连接到MC'))),
+          h('span', { 'data-wc-grow': '' }),
+          h('button', {
+            type: 'button', 'data-wc-xbtn': '', title: '关闭（Esc）', 'aria-label': '关闭', onClick: closeAll,
+          }, IconCloseOutlineRegular ? h(IconCloseOutlineRegular, { size: 14 }) : '×'),
+        ),
+        h('div', { 'data-wc-cn-body': '' },
+          // 顶部的**浮层错误提示**（落在地址上方的留白里；3s 自灭，见上面的 effect）
+          error ? h('div', { 'data-wc-cn-error': '', role: 'alert' }, error) : null,
+          // ① 地址行
+          h('div', null,
+            h('div', { 'data-wc-cn-fieldlabel': '' }, '服务器地址'),
+            h('div', { 'data-wc-cn-row': '' },
+              h('input', {
+                'data-wc-cn-input': '', value: address, spellCheck: false, disabled: busy,
+                placeholder: 'example.com 或 example.com:25565',
+                onChange: (e) => setAddress(e.target.value),
+                onKeyDown: (e) => { if (e.key === 'Enter') connect(address, 'manual') },
+              }),
+              h('button', {
+                type: 'button', 'data-wc-cn-actions': '', disabled: busy,
+                onClick: () => connect(address, 'manual'),
+              }, h(RunIcon, { size: 14 }), '连接')),
+          ),
+          // ② 历史气泡行
+          servers.length
+            ? h('div', { 'data-wc-cn-bubbles': '' }, servers.map((addr) => h('span', { key: addr, 'data-wc-cn-bubble': '' },
+              h('span', null, addr),
+              h('button', {
+                type: 'button', 'data-wc-cn-bubblex': '', title: '移除这条历史', 'aria-label': '移除',
+                onClick: () => removeServer(addr),
+              }, IconCloseOutlineRegular ? h(IconCloseOutlineRegular, { size: 11 }) : '×'))))
+            : null,
+          // ③ 探测中 → ④ 局域网行
+          lan === null
+            ? h('div', { 'data-wc-cn-probe': '' },
+              h('div', { 'data-wc-cn-dots': '' },
+                h('span', { 'data-wc-cn-dot': '' }), h('span', { 'data-wc-cn-dot': '' }), h('span', { 'data-wc-cn-dot': '' })),
+              h('span', null, '正在寻找DSH所在局域网中的服务器'))
+            : (lan.length
+                ? h('div', { 'data-wc-cn-lans': '' }, lan.map((s) => h('button', {
+                  key: s.address, type: 'button', 'data-wc-cn-lan': '', disabled: busy,
+                  title: `直接连接 ${s.address}`,
+                  onClick: () => clickLan(s),
+                },
+                h('span', { 'data-wc-cn-chip': '' }, '局域网'),
+                h('span', { 'data-wc-cn-addr': '' }, s.address),
+                // MOTD（地址右边）：灰色、固定两行、**垂直居中**
+                s.motd ? h('span', { 'data-wc-cn-motd': '' }, h('span', { 'data-wc-cn-motdtext': '' }, s.motd)) : null,
+                // 版本号（玩家数**左边**）：不支持 → 红
+                s.version
+                  ? h('span', { 'data-wc-cn-ver': '', ...(lanVersionOk(s) ? {} : { 'data-wc-cn-bad': '' }) }, String(s.version))
+                  : null,
+                // 在线人数：满了 → 红
+                (s.players && s.players.online != null)
+                  ? h('span', { 'data-wc-cn-count': '', ...(lanFull(s) ? { 'data-wc-cn-bad': '' } : {}) },
+                    `${s.players.online}/${s.players.max ?? '?'}`)
+                  : null,
+                // 运行图标：**无缝嵌在卡片里**（不是独立按钮）
+                h('span', { 'data-wc-cn-run': '' }, h(RunIcon, { size: 16 })))))
+                : null),
+        ),
+        // ⑤ 配置卡片行：**固定在底部的 footer**（与上方内容之间留白）
+        h('div', { 'data-wc-cn-foot': '' },
+          h('div', { 'data-wc-cn-config': '' },
+            h('div', null,
+              h('div', { 'data-wc-cn-fieldlabel': '' }, '账户'),
+              h('div', { 'data-wc-cn-pick': '', ref: pickRef },
+                h('button', {
+                  type: 'button', 'data-wc-cn-pickbtn': '', 'aria-haspopup': 'listbox',
+                  'aria-expanded': acctOpen ? 'true' : 'false',
+                  onClick: () => setAcctOpen((v) => !v),
+                },
+                h('span', null, current ? acctLabelNode(current) : '（无账户）'),
+                IconChevronDownOutlineRegular ? h(IconChevronDownOutlineRegular, { size: 14 }) : null),
+                acctOpen
+                  ? h('div', { 'data-wc-cn-menu': '', role: 'listbox' },
+                    accts.map((a) => h('button', {
+                      key: a.innerID, type: 'button', 'data-wc-cn-item': '', role: 'option',
+                      'aria-selected': a.innerID === accountId ? 'true' : 'false',
+                      onClick: () => { setAccountId(a.innerID); setAcctOpen(false) },
+                    }, acctLabelNode(a))),
+                    h('button', {
+                      type: 'button', 'data-wc-cn-item': '', 'data-wc-cn-manage': '',
+                      onClick: () => { setAcctOpen(false); setSettingsOpen(true) },
+                    }, '添加/管理'))
+                  : null)),
+            // 预留：其余配置插槽
+            h('div', { 'data-wc-cn-extras': '' }))),
+        )),
+      // 叠加在上层的设置弹窗（受控，直接落到「账户」页）——是**兄弟**节点（不嵌在遮罩里，
+      // 否则点它会冒泡到连接弹窗的"点遮罩关闭"）
+      h(McSettingsModal, {
+        open: settingsOpen, initialTab: 'accounts', sessionId, nested: true,
+        onClose: () => setSettingsOpen(false),
+      }))
+    }
+
     function McSettingsModal(props) {
       // 🔴 提示词是**按会话工作区**的（`.whale-craft/RULES.md`），所以要把会话 id / 工作区 cwd 带上。
       const sessionId = props?.sessionId ?? null
@@ -1575,7 +1990,12 @@ select[data-wc-in]{appearance:none;padding-right:22px;
       const controlled = props?.open !== undefined
       const [internalOpen, setInternalOpen] = React.useState(false)
       const open = controlled ? props.open === true : internalOpen
-      const [tab, setTab] = React.useState('accounts')
+      // 初始标签页：受控入口可以指定（如「连接到MC」里的「添加/管理」直接落到「账户」）
+      const [tab, setTab] = React.useState(props?.initialTab ?? 'accounts')
+      // 组件跨开关复用 → 每次"打开"都回到指定标签页（没指定就不动）
+      React.useEffect(() => {
+        if (open && props?.initialTab) setTab(props.initialTab)
+      }, [open, props?.initialTab])
       const [accounts, setAccounts] = React.useState([])
       const [servers, setServers] = React.useState([])
       const [defaultAccount, setDefaultAccount] = React.useState(null)
@@ -1881,6 +2301,8 @@ select[data-wc-in]{appearance:none;padding-right:22px;
         'div',
         {
           'data-wc-overlay': '',
+          // 叠在「连接到MC」弹窗之上时（「添加/管理」打开）→ 用更高 z-index
+          ...(props?.nested ? { 'data-wc-nested': '' } : {}),
           role: 'presentation',
           onClick: close,               // 点遮罩关闭
           onMouseDown: (e) => { if (e.target === e.currentTarget) e.preventDefault() },
@@ -1966,6 +2388,13 @@ select[data-wc-in]{appearance:none;padding-right:22px;
           McStatusBar,
         ))
 
+        // 「连接到MC」入口①：标题条（order 40 → 落在「设置」45 的**左边**）。
+        // 门控同「设置」（MC 模式）；**在游戏中时隐藏**（见 McConnectEntry）。
+        ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
+          { name: 'conversation.session.header.actions', id: 'whale_craft-mc-connect', order: 40 },
+          McConnectEntry,
+        ))
+
         // 「MC设置」入口①：标题条（**已有会话**时才出现）。
         // 判据 = 会话记录的 agent preset ∈ mcModePresets（本地判定，见 useMcSettingsGate）。
         // order 45 < 50 → 落在状态条**左边**（官方预设标签 -10 更左）。
@@ -1974,10 +2403,10 @@ select[data-wc-in]{appearance:none;padding-right:22px;
           McSettingsEntry,
         ))
 
-        // 「MC设置」入口②：**新会话页**。注册在这里的组件只当"驱动器"
-        // （它自己 return null，按钮由 mountHeroChipButton 插到模式芯片右边）——
+        // 「MC设置 / 连接到MC」入口②：**新会话页**。注册在这里的组件只当"驱动器"
+        // （它自己 return null，按钮由 mountHeroButtons 按 order 插到模式芯片右边）——
         // 借这个插槽拿一个可靠的挂载时机：hero 与 composer 都渲染它，配合 blank 门控
-        // 就只在**新会话页**挂载。与入口①按 blank 互斥，所以页面上任何时候只有一个入口/一个模态框。
+        // 就只在**新会话页**挂载。与入口①按 blank 互斥，所以页面上任何时候只有一套入口。
         ctx.slots.inject('conversation.input.right', () => ctx.slots.register(
           { name: 'conversation.input.right', id: 'whale_craft-mc-settings-hero', order: 20 },
           McSettingsDockEntry,
