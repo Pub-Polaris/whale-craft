@@ -885,6 +885,8 @@ export function apply(ctx, rawConfig) {
       // 「MC设置」入口的模式门控：前端拿这份名单 + 会话记录的 preset 就能**本地**判定
       // （不必为按钮问一次服务端；2026-09-16 事故：一次性请求失败后按钮永久消失）
       mcModePresets: pluginConfig.mcModePresets,
+      // 其中哪些是 **MC+ 变体**（前端显示「MC+模式」标签用；显示名仍以宿主 preset 的 name 为准）
+      mcPlusPresets: pluginConfig.mcPlusPresets,
       configFile: pluginConfig.file,
       workspaceConfigFile: wsConfigPath(memoryRootFor(cwd)),
     }
@@ -1213,6 +1215,7 @@ export function apply(ctx, rawConfig) {
     if (req.method === 'GET' && path === '/api/mc/mode') {
       const sessionId = url.searchParams.get('sessionId') ?? ''
       let mcMode = false
+      let mcPlus = false
       let agent = null
       let reason = null
       let hasWorkspace = null
@@ -1223,8 +1226,10 @@ export function apply(ctx, rawConfig) {
           //    **不再**因为"没工作区"把它压成 false：那是前端藏入口的旧依据，
           //    而 2026-09-18 起入口一律显示、工作区改到点击时检查（另报 hasWorkspace）。
           mcMode = agent ? isMcModeAgent(agent) : mcModeAgentIds.has(sessionId)
+          mcPlus = agent ? isMcPlusAgent(agent) : mcPlusAgentIds.has(sessionId)
         } catch {
           mcMode = mcModeAgentIds.has(sessionId)
+          mcPlus = mcPlusAgentIds.has(sessionId)
         }
         if (agent) {
           hasWorkspace = Boolean(workspaceOf(agent))
@@ -1261,7 +1266,7 @@ export function apply(ctx, rawConfig) {
           }
         } catch (e) { diag = { reason, error: String(e.message) } }
       }
-      return sendJson(res, 200, { ok: true, sessionId, mcMode, hasWorkspace, diag })
+      return sendJson(res, 200, { ok: true, sessionId, mcMode, mcPlus, hasWorkspace, diag })
     }
 
     if (req.method === 'POST' && path === '/api/mc/stop') {
@@ -1789,7 +1794,12 @@ export function apply(ctx, rawConfig) {
           note: '凭据只存本机 DSH 凭据库；AI 只能看到账户基本信息（innerID/ID/名字/UUID/服务器），看不到密码或 token。',
         },
         tools: {
-          namespaces: { mc_: '游戏内', mc_kit_: '游戏外辅助（记忆/画图/交付）', mc_admin_: '管理（MC 模式看不见也调不动）' },
+          namespaces: {
+            mc_: '游戏内',
+            mc_kit_: '游戏外辅助（记忆/画图/交付）',
+            mc_admin_: '管理（MC 模式看不见也调不动；普通模式与 MC+ 模式可见）',
+            note: 'mc_* / mc_kit_* 只在 MC模式 / MC+模式 会话里暴露（其他模式隐藏 + guard 硬拒）。',
+          },
           count: ourToolNames.length,
           names: [...ourToolNames],
         },
@@ -1807,6 +1817,7 @@ export function apply(ctx, rawConfig) {
           memoryDir: memoryFor(workspaceOf(exec?.agent)).root,
           workspaceConfigFile: wsConfigPath(memoryRootFor(workspaceOf(exec?.agent))),
           mcModePresets: pluginConfig.mcModePresets,
+          mcPlusPresets: pluginConfig.mcPlusPresets,
         },
         prompt: {
           agentsMd: agentsMdPath(memoryFor(workspaceOf(exec?.agent)).root),
@@ -2763,6 +2774,15 @@ export function apply(ctx, rawConfig) {
       title: versionPromptTitle(PLUGIN_VERSION),
       text: versionPromptText(),
     })
+    // ③·5 **MC+ 模式说明**（无开关，仅 MC+ 会话）：MC+ 在 MC 模式基础上多一层"标准工具全量 +
+    //      文件全工作区"的语境，随版本硬编码。MC 模式**不投**这条（preset 指纹换代时会整体重投）。
+    if (isMcPlusAgent(agent)) {
+      items.push({
+        rel: versionPromptSource(PLUGIN_VERSION) + '（MC+ 模式说明）',
+        title: versionPromptTitle(PLUGIN_VERSION) + '｜MC+ 模式说明',
+        text: MC_PLUS_NOTICE_TEXT,
+      })
+    }
     // ④ 记忆总索引（`.whale-craft/README.md`）：**每个 MC 会话都给一次**——这正是"长期记忆"的入口。
     //    内容空（还没记过东西）也照样给：里面写着"怎么记"，第一轮就知道该往哪写。
     {
@@ -2865,11 +2885,20 @@ export function apply(ctx, rawConfig) {
    * 复制官方 `minimal` 恰好带这两个开关 → "设置页显示一切正常、AI 却什么都没收到"（2026-09-16 真机）。
    */
   let mcPresetDiag = null
-  const refreshMcPresetDiag = () => {
+  /**
+   * @param agent - 可选：优先诊断**这个会话自己**的 preset（两个 preset 在名单里时，
+   *   不能永远只报第一个）。读不到组成文件（如新宿主的声明式 preset 没有磁盘目录）→
+   *   返回上次结果/`null`；声明式 preset 的 persona 由本包声明掌控、不存在压制开关，
+   *   所以新宿主上这里是空转，只对旧宿主（目录式 preset）有诊断意义。
+   */
+  const refreshMcPresetDiag = (agent) => {
     try {
       const svc = agentPresetsSvc
       if (!svc) return mcPresetDiag
-      for (const id of pluginConfig.mcModePresets) {
+      const prefer = agent ? lastPresetSeen.get(agent) : null
+      const list = pluginConfig.mcModePresets
+      const ids = prefer && list.includes(prefer) ? [prefer, ...list.filter((x) => x !== prefer)] : list
+      for (const id of ids) {
         const dir = mcPresetDir(svc, id)
         const p = dir ? join(dir, 'agent.cordis.yml') : null
         if (!p || !existsSync(p)) continue
@@ -2907,6 +2936,7 @@ export function apply(ctx, rawConfig) {
     '.whale-craft/RULES.md',
     '.whale-craft/README.md',
     versionPromptSource(PLUGIN_VERSION),
+    versionPromptSource(PLUGIN_VERSION) + '（MC+ 模式说明）',
   ]
 
   /**
@@ -2920,6 +2950,7 @@ export function apply(ctx, rawConfig) {
     const cwd = workspaceOf(agent)
     const root = cwd ? memoryRootFor(cwd) : null
     const mcMode = Boolean(agent) && isMcModeAgent(agent)
+    const mcPlus = Boolean(agent) && isMcPlusAgent(agent)
     const wsAgents = agent ? join(workspaceRootFor(agent), 'AGENTS.md') : null
     const cur = root ? readAgentsMd(root) : null
     const agentsFile = root ? agentsMdPath(root) : null
@@ -2933,10 +2964,11 @@ export function apply(ctx, rawConfig) {
     //    复制官方 minimal 就会带这两个开关（2026-09-16 真机事故的根因）。
     //    ⚠️ 现在我们的提示词走**插件提示行**（inbox.nextStep），**不受它影响** —— 这条只作为
     //    "preset 还没被修好"的提示留着（它仍会压掉宿主自己的运行期上下文）。
-    const personaSuppresses = Boolean(refreshMcPresetDiag()?.complete || mcPresetDiag?.runtimeContextSuppressed)
+    const personaSuppresses = Boolean(refreshMcPresetDiag(agent)?.complete || mcPresetDiag?.runtimeContextSuppressed)
     const sent = sentNoticeRels(agent)
     return {
       mcMode,
+      mcPlus,
       presetId,
       workspace: cwd ?? null,
       switches: { injectWhaleCraftAgentsMd: injectWc, injectWorkspaceAgentsMd: injectWs },
@@ -2963,12 +2995,14 @@ export function apply(ctx, rawConfig) {
         'workspace-agents-md': sent.includes('AGENTS.md'),
         'version-prompt': sent.some((r) => String(r).startsWith('whale_craft@')),
         'memory-index': sent.includes('.whale-craft/README.md'),
+        'mc-plus-note': sent.some((r) => String(r).includes('（MC+ 模式说明）')),
       },
       segments: {
         'agents-md': sent.includes('.whale-craft/RULES.md'),
         'workspace-agents-md': sent.includes('AGENTS.md'),
         'version-prompt': sent.some((r) => String(r).startsWith('whale_craft@')),
         'memory-index': sent.includes('.whale-craft/README.md'),
+        'mc-plus-note': sent.some((r) => String(r).includes('（MC+ 模式说明）')),
       },
       // ⚠️ 这里只留**用户看不出来、又真的影响投递**的原因。
       //    "还没到投递时机 / 开关是关的" 这种**不用提示**（用户 2026-09-18：多余）——
@@ -3058,6 +3092,23 @@ export function apply(ctx, rawConfig) {
    * 系统提示词**由宿主按这个 preset 自动注入**，插件不再自己往 systemPrompt 里塞（用户要求）。
    */
   const MC_PERSONA_TEXT = '你在一台真实的 Minecraft Java 版服务器里扮演一名玩家：你的"身体"是一台无头机器人，能观察世界、移动、挖掘和建造。'
+
+  /**
+   * 「MC+模式」的补充说明（随版本硬编码、无开关；**只投给 MC+ 会话**，见 `reconcileNotices`）。
+   *
+   * MC+ = MC 模式基础上开放**标准模式全部工具**（用户 2026-10-04 定）。规矩（RULES.md）、
+   * 版本提示、记忆索引照常注入；这条只把"这个模式多什么、少什么"讲清楚，免得 AI 以为自己
+   * 还在受限模式里（或反过来乱用 mc 工具）。
+   */
+  const MC_PLUS_NOTICE_TEXT = [
+    '【MC+ 模式】本会话在 MC 模式的基础上，开放了**标准模式的全部工具**：',
+    '',
+    '· 标准工具可用：shell（pwsh/bash）、文件搜索、子代理 / 工作流、计划模式、网络访问、技能等；',
+    '· 文件工具（read / write / edit / glob / grep / read_image）可在**整个工作区**内使用，不受 `.whale-craft/` 限制；',
+    '· `mc_*` / `mc_kit_*` 工具与 MC 模式完全一致：记忆仍写入 `.whale-craft/`，凭据相关路径依旧不可触碰；',
+    '· 行事准则（`.whale-craft/RULES.md`）与看门狗与 MC 模式相同；管理工具 `mc_admin_*` 对本模式可见。',
+    '适合"不局限于游戏内"的任务与定制要求——但游戏内的事，仍然优先用 MC 工具与游戏内交流来办。',
+  ].join('\n')
 
   const expandHome = (p) => {
     const s = String(p ?? '')
@@ -3423,20 +3474,29 @@ export function apply(ctx, rawConfig) {
   /** 诊断用：每个 agent 最近一次看到的 preset id（`/api/mc/mode` 会报出来） */
   const lastPresetSeen = new WeakMap()
 
-  const isMcModeAgent = (agent) => {
-    if (!agent?.ctx) return false
+  /**
+   * 现场问出这个 agent 的 preset id（拿不到 → null）。
+   *
+   * 🔴 以前只认 inject 抓到的那个引用：一旦它还是 null，判据就永远 false，
+   *    表现就是"按钮有、提示词没有、隔离也不生效"（2026-09-16 真机事故的同一家族）——
+   *    所以服务可能晚就绪 / `ctx.inject` 没跑到时**现场再拿一次**。
+   */
+  const mcPresetIdOf = (agent) => {
+    if (!agent?.ctx) return null
     try {
-      // 服务可能晚就绪 / `ctx.inject` 没跑到 → **现场再拿一次**。
-      // 🔴 以前只认 inject 抓到的那个引用：一旦它还是 null，isMcModeAgent 就永远 false，
-      //    表现就是"按钮有、提示词没有、隔离也不生效"（2026-09-16 真机事故的同一家族）。
       let svc = agentPresetsSvc
       if (!svc) { try { svc = agent.ctx.get('agentPresets') } catch { svc = null } }
       if (!svc) { try { svc = ctx.get('agentPresets') } catch { svc = null } }
       const id = svc?.composedPreset?.(agent.ctx)
-      if (typeof id === 'string' && id) lastPresetSeen.set(agent, id)
-      return pluginConfig.isMcModePreset(id)
-    } catch { return false }
+      if (typeof id === 'string' && id) { lastPresetSeen.set(agent, id); return id }
+      return null
+    } catch { return null }
   }
+
+  const isMcModeAgent = (agent) => pluginConfig.isMcModePreset(mcPresetIdOf(agent))
+
+  /** MC+ 变体判据（MC 模式基础上开放标准模式全部工具）；名单与语义见 src/config.mjs isMcPlusPreset */
+  const isMcPlusAgent = (agent) => pluginConfig.isMcPlusPreset(mcPresetIdOf(agent))
 
   /**
    * 看门狗的**模式闸门**：只有"仍然是 MC 模式"的会话才允许它往会话里注入。
@@ -3465,11 +3525,14 @@ export function apply(ctx, rawConfig) {
    * 用户要求**删掉显式注入**，而且它的内容（单对话 / 记忆 / 看门狗 / 指令是最后手段 / 别乱挖乱建）
    * 已经全部写在 `.whale-craft/AGENTS.md`（Master 亲自给的那版）里 —— 留着就是重复。 */
 
-  /** 这个 agent 是否已经应用过 MC 模式策略（WeakSet：一个 agent 只做一次） */
-  const mcPolicyApplied = new WeakSet()
+  /**
+   * 这个 agent 当前套用的**工具曝光策略**（'mc' / 'mc-plus' / 'other'；没套过 = 不存在）。
+   * 由 `applyMcModePolicy` 按现场判据重算；kind 没变就不动（幂等）。
+   */
+  const mcPolicyKind = new WeakMap()
 
   /**
-   * MC 模式工具白名单的**撤销手柄**：`tools.restrict()` 返回的 disposer。
+   * 工具限制的**撤销手柄**：`tools.restrict()` 返回的 disposer（mc 白名单与 other 的 deny 共用）。
    *
    * 🔴 2026-09-17 修（用户报的"标准模式会话无法执行命令"）：`restrict()` 是**黏**的 ——
    *    它挂在 agent scope 上，**会话不死就不消失**；而我们以前把返回的 disposer 丢掉了，
@@ -3477,10 +3540,8 @@ export function apply(ctx, rawConfig) {
    *    会一直留着 MC 白名单（没有 pwsh/bash），看起来就像"标准模式坏了"。
    *    真机复现：`session-55d48701`（standard → 04:51 切 minecraft → 06:34 切回 standard，
    *    之后那个"标准模式"会话的工具面仍是 mc_* + read/write/edit/read_image/present）。
-   *    现在：切到非 MC 模式 → `release()` 摘掉白名单，并从 `mcPolicyApplied` 里删掉，
-   *    这样再切回 MC模式 还能重新套上。
-   *    （只有白名单是黏的：admin/文件越界那两道在 **guard** 里，每次调用现场判 `isMcModeAgent`，
-   *      切模式立刻自愈，不需要撤销。）
+   *    现在：套用/撤销都由 `touch()` 按**现场判据**决定；kind 变化必先 `release()`。
+   *    （admin/文件边界这些在 **guard** 里，每次调用现场判，切模式立刻自愈，不需要撤销。）
    */
   const mcRestrictRelease = new WeakMap()
 
@@ -3490,27 +3551,73 @@ export function apply(ctx, rawConfig) {
    * 这里只是"agent 已经不在了 / 拿不到 agentPresets"时的退路。
    */
   const mcModeAgentIds = new Set()
+  /** 已确认属于 **MC+** 变体的会话 id（同样的兜底用途；判据见 isMcPlusAgent） */
+  const mcPlusAgentIds = new Set()
   /** 因为"没选中工作区"被拒绝进入 MC 模式的会话（`/api/mc/mode` 用它报原因） */
   const noWorkspaceRefused = new Set()
 
+  /**
+   * 按**现场判据**给这个 agent 套工具曝光策略（三种去向）：
+   *   · `mc`（MC模式）—— 白名单：mc 工具 + 文件工具 + present + allowOtherTools；
+   *   · `mc-plus`（MC+模式）—— **不限制工具面**（组成里挂了标准工具全量，mc/mckit 走全局注册直接可见）；
+   *   · `other`（其它模式）—— `deny` 掉 mc_*（mc_admin_* 除外）与 mc_kit_* —— 用户 2026-10-04：
+   *     "除了 MC模式和 MC+模式，不再给其他模式暴露 mc 和 mckit 工具"。
+   *
+   * kind 没变 = 幂等返回；kind 变了先撤销旧限制再套新的（`restrict` 是黏的，见 mcRestrictRelease）。
+   */
   const applyMcModePolicy = (agent) => {
-    if (!agent || mcPolicyApplied.has(agent)) return
-    if (!isMcModeAgent(agent)) return
+    if (!agent?.ctx) return
+    const id = mcPresetIdOf(agent)
+    const isMc = pluginConfig.isMcModePreset(id)
+    const isPlus = pluginConfig.isMcPlusPreset(id)
     // 🔴 用户 2026-09-16："如果没有选中工作区，则拒绝发起 MC 模式会话和设置。"
     //    没有工作区 → `.whale-craft/`（记忆 + 提示词）无处安放 → 不当成 MC 会话：
     //    不套隔离、不注入专属提示词、前端也会隐藏「MC设置」入口（/api/mc/mode 会带 reason）。
-    if (!workspaceOf(agent)) {
+    if (isMc && !workspaceOf(agent)) {
       if (agent.id) noWorkspaceRefused.add(String(agent.id))
       logLine(`拒绝启用 MC 模式：这个会话没有选中工作区（.whale-craft 与提示词要建在工作区里）`)
       return
     }
-    mcPolicyApplied.add(agent)
-    if (agent.id) mcModeAgentIds.add(String(agent.id))
+    if (agent.id) noWorkspaceRefused.delete(String(agent.id))
+    const kind = isMc ? (isPlus ? 'mc-plus' : 'mc') : 'other'
+    if (mcPolicyKind.get(agent) === kind) return
+    // 套新的之前先撤销旧限制（kind 变了；幂等：没套过就没有手柄）
+    const prev = mcRestrictRelease.get(agent)
+    if (prev) {
+      mcRestrictRelease.delete(agent)
+      try { prev() } catch (e) { logLine(`撤销上一轮工具限制失败（guard 仍会兜底）：${e?.message ?? e}`) }
+    }
+    mcPolicyKind.set(agent, kind)
+
+    if (kind === 'other') {
+      if (agent.id) { mcModeAgentIds.delete(String(agent.id)); mcPlusAgentIds.delete(String(agent.id)) }
+      // 非 MC 模式：mc_* / mc_kit_* 从可见面摘掉；mc_admin_* 例外（它的用途就是在普通会话里管理）
+      try {
+        const t = scopedTools(agent.ctx)
+        if (!t) { logLine('非 MC 模式：拿不到 scoped tools，跳过 mc 工具隐藏（guard 仍会硬拒）'); return }
+        const deny = ourToolNames.filter((n) =>
+          n.startsWith('mc_kit_') || (n.startsWith('mc_') && !n.startsWith('mc_admin_')))
+        if (!deny.length) return
+        mcRestrictRelease.set(agent, t.restrict({ deny }))
+        logLine(`非 MC 模式：mc / mc_kit 工具已从可见面摘掉（mc_admin_* 保留）${agent.id ? `（${agent.id}）` : ''}`)
+      } catch (e) {
+        logLine(`非 MC 模式隐藏 mc 工具失败（${String(e?.message).slice(0, 160)}）—— guard 仍会硬拒`)
+      }
+      return
+    }
+
+    if (agent.id) {
+      mcModeAgentIds.add(String(agent.id))
+      if (isPlus) mcPlusAgentIds.add(String(agent.id))
+      else mcPlusAgentIds.delete(String(agent.id))
+    }
     ensureMemoryRoot(agent)        // ← 首次发起 MC 模式会话 = 建 `.whale-craft/`（README / RULES.md）的时机
     // 🔴 2026-09-18：**这里不再投提示词**。投递搬到"每个请求组装之前"（`agent/pre-step` → `reconcileNotices`），
     //    因为模式在第一次请求之前还可能被改（宿主允许空白期反复切 preset）。
     //    这条日志只是"模式已生效"的标记；真投出去时 `reconcileNotices` 自己会记一行。
-    logLine(`MC 模式生效（preset=${lastPresetSeen.get(agent) ?? '?'}，${agent.id}）提示词将在首次请求组装前投递`)
+    logLine(`${isPlus ? 'MC+ 模式' : 'MC 模式'}生效（preset=${id ?? '?'}，${agent.id}）提示词将在首次请求组装前投递`)
+
+    if (isPlus) return   // MC+：不套白名单（见上面注释）；guard 对它只保留凭据路径拒绝
 
     // ② 工具可见性：**白名单**（用户 2026-09-16 真机投诉："这个 agent 怎么还能用 pwsh！不是只暴露我们指定的工具吗！"）
     //
@@ -3559,18 +3666,21 @@ export function apply(ctx, rawConfig) {
   }
 
   /**
-   * 退出 MC 模式：**把工具白名单摘掉**（切回普通模式必须能再用 pwsh/bash）。
+   * 退出 MC 模式（切回普通模式）：**撤回提示行 + 把工具策略换成"非 MC"档**。
    *
-   * 🔴 2026-09-17 新增（用户报的"标准模式会话无法执行命令"）：`applyMcModePolicy` 是"只套一次"
-   *    （`mcPolicyApplied`），而**没有任何地方撤销** —— 从 MC模式 切回 标准模式 的会话就永久
-   *    留在 MC 白名单里。这里与其对称：套用/撤销都由 `touch()` 按**现场判据**决定。
+   * 🔴 2026-09-17 新增（用户报的"标准模式会话无法执行命令"）：历史上 `applyMcModePolicy` 是
+   *    "只套一次"、没有任何地方撤销 —— 从 MC模式 切回 标准模式的会话会永久留在 MC 白名单里。
+   *    现在套用/撤销都由 `touch()` 按**现场判据**决定。
+   * 🔴 2026-10-04：非 MC 模式**不再等于"无限制"** —— 用户要求"除了 MC和 MC+ 模式，不再给其他
+   *    模式暴露 mc 和 mckit 工具"，所以这里委托 `applyMcModePolicy`（它会释放旧限制并套 deny）。
+   *    guard 里还有一道"非 MC 拒调 mc/mckit"的硬保证（防 restrict 没套上）。
    *
-   * 幂等：没套过就什么都不做（`mcRestrictRelease` 里没有手柄）。
-   * 撤销后 `mcPolicyApplied` 也删掉 → 再切回 MC模式 能重新套上。
+   * 幂等：重复调用只是重复"撤回提示行"（本身幂等）与一次 kind 比对。
    * @param agent - 宿主 Agent 对象（WeakMap 键，不阻止回收）
    */
   const liftMcModePolicy = (agent) => {
     if (!agent) return
+    const was = mcPolicyKind.get(agent)
     // 这个会话已经不是 MC 模式了 → "因没选工作区被拒绝"的旧标记也一起清掉
     if (agent.id) noWorkspaceRefused.delete(String(agent.id))
     // ① 撤回提示行（还没投递的直接删；已经进对话的补一条作废声明）——见 withdrawAgentsMdNotices
@@ -3581,42 +3691,58 @@ export function apply(ctx, rawConfig) {
       const wd = agent.id ? registry.peek(String(agent.id))?.watchdog : null
       if (wd?.armed) logLine(`本会话已退出 MC 模式：看门狗注入已闸掉（仍 armed，切回 MC 模式即恢复）`)
     } catch { /* 只是记一行日志，失败无所谓 */ }
-    const release = mcRestrictRelease.get(agent)
-    if (release) {
-      mcRestrictRelease.delete(agent)
-      try { release() } catch (e) { logLine(`撤销 MC 模式工具白名单失败（guard 仍会兜底）：${e?.message ?? e}`) }
-    }
-    if (mcPolicyApplied.has(agent)) {
-      mcPolicyApplied.delete(agent)
-      if (agent.id) mcModeAgentIds.delete(String(agent.id))
-      logLine(`已退出 MC 模式（preset=${lastPresetSeen.get(agent) ?? '?'}，${agent.id ?? '?'}）：工具白名单已撤销`)
-    } else if (release) {
-      logLine(`已撤销 MC 模式工具白名单（${agent.id ?? '?'}）`)
+    // ③ 工具策略切到"非 MC"档：释放旧限制 + 套 deny（幂等，见 applyMcModePolicy）
+    try { applyMcModePolicy(agent) } catch (e) { logLine(`退出 MC 模式后套用非 MC 工具策略失败：${e?.message ?? e}`) }
+    if (was === 'mc' || was === 'mc-plus') {
+      logLine(`已退出 MC 模式（preset=${lastPresetSeen.get(agent) ?? '?'}，${agent.id ?? '?'}）：${was === 'mc' ? '工具白名单已撤销' : 'MC+ 工具面已恢复为普通限制'}`)
     }
   }
 
-  // ③ 硬保证（不管可见性怎样）：管理工具调不动 + **文件工具只能碰 `<工作区>/.whale-craft/`**
+  // ③ 硬保证（不管可见性怎样）：按模式分档的**调用级兜底**。
+  //
+  //    · MC 模式：管理工具调不动 + 文件工具只能碰 `<工作区>/.whale-craft/` + 受保护文件只读；
+  //    · MC+ 模式：只保留凭据路径拒绝（文件全工作区、admin 可见——用户 2026-10-04 定）；
+  //    · 其它模式：拒调 mc_* / mc_kit_*（mc_admin_* 例外）——"不再给其他模式暴露 mc 和 mckit
+  //      工具"的硬保证，与可见性 deny 双保险（restrict 没套上时也调不动）。
   try {
     ctx.tools.guard((exec) => {
       const name = String(exec?.name ?? '')
-      if (!isMcModeAgent(exec?.agent)) return undefined
+      const agent = exec?.agent
+      // 每次调用都现场判（与 restrict/提示词同一个判据）；preset id 只取一次，省一次服务查询
+      const presetId = agent ? mcPresetIdOf(agent) : null
+      const isMc = pluginConfig.isMcModePreset(presetId)
+      const isPlus = pluginConfig.isMcPlusPreset(presetId)
 
-      // ① 管理工具：MC 模式一律拒绝（隐藏之外再上一道硬锁）
+      // ① 凭据硬拒：两种 MC 模式都保留（"凭据不进模型上下文"是插件不变式）
+      if ((isMc || isPlus) && /^(read|edit|write|glob|grep|ls|cat|read_image|mc_kit_memory)$/i.test(name)) {
+        const text = JSON.stringify(exec?.arguments ?? {})
+        if (/(\.credentials|credentials\.yaml|[/\\]\.dsh[/\\])/i.test(text)) {
+          return 'MC 模式不允许触碰宿主凭据文件；账号密码在「MC设置」里维护，AI 不需要也不应该看到。'
+        }
+        // 明文凭据备忘（`secrets/` 下用户自己的私密档）：同样不许读
+        // （2026-09-16：账户体系上线后，密码只该待在「MC设置 → 账户」里）
+        if (/[/\\]secrets[/\\]/i.test(text)) {
+          return 'MC 模式不允许读凭据备忘目录（secrets/）；账号密码在「MC设置 → 账户」里维护，AI 不需要也不应该看到。'
+        }
+      }
+      if (isPlus) return undefined   // MC+：其余放行（文件全工作区；admin 可见；受保护文件按宿主默认）
+
+      if (!isMc) {
+        // 非 MC 模式：mc_* / mc_kit_* 硬拒（mc_admin_* 例外——它的用途就是在普通会话里管理）
+        if (agent && (/^mc_kit_/i.test(name) || (/^mc_/i.test(name) && !/^mc_admin_/i.test(name)))) {
+          return '这些工具只在 MC模式 / MC+模式 会话里可用——请切换会话模式后再用。'
+        }
+        return undefined
+      }
+
+      // ── 以下只对 MC 模式生效 ──────────────────────────────────────────────
+      // ② 管理工具：MC 模式一律拒绝（隐藏之外再上一道硬锁）
       if (name.startsWith('mc_admin_')) {
         return 'MC 模式会话不能读取或修改 whale_craft 配置——请在普通会话里用 mc_admin_config 改。'
       }
 
       if (/^(read|edit|write|glob|grep|ls|cat|read_image|mc_kit_memory)$/i.test(name)) {
         const args = exec?.arguments ?? {}
-        const text = JSON.stringify(args)
-        if (/(\.credentials|credentials\.yaml|[/\\]\.dsh[/\\])/i.test(text)) {
-          return 'MC 模式不允许触碰宿主凭据文件；账号密码在「MC设置」里维护，AI 不需要也不应该看到。'
-        }
-        // ② 明文凭据备忘（`secrets/` 下用户自己的私密档）：同样不许读
-        //    （2026-09-16：账户体系上线后，密码只该待在「MC设置 → 账户」里）
-        if (/[/\\]secrets[/\\]/i.test(text)) {
-          return 'MC 模式不允许读凭据备忘目录（secrets/）；账号密码在「MC设置 → 账户」里维护，AI 不需要也不应该看到。'
-        }
         // 受保护文件（RULES.md / AGENTS.md / config.json，src/protected.mjs）：**可读不可写**。
         // 宿主文件工具里只有 write|edit 会写；记忆工具按 action 判定（memory.mjs 内还有一道兜底）。
         // 判定 = 路径写法命中（裸名/含 .whale-craft 段）**或**解析到记忆根后正好是那个文件
@@ -3676,10 +3802,10 @@ export function apply(ctx, rawConfig) {
   // agent 建立 / 首轮开始 / **模式被选上** 时应用策略。
   // 🔴 2026-09-16 真机事故：只挂 `agent/created` + `agent/session-start` 是不够的 ——
   //    preset 完全可能在 agent 建好之后才选上（在会话里点「MC模式」芯片），宿主为这种情况
-  //    专门发 **`agent-preset/selected`**（`agent-presets/src/index.ts` 里 emit，两个位置参数：
-  //    `(sessionId, presetId)`）。当时没挂它 → 策略与提示词都不会生效。
-  //    每个 agent 只做两件事：① 若是 MC 模式就投提示行并套白名单（applyMcModePolicy）
-  //    ② **若不是 MC 模式就把白名单摘掉**（liftMcModePolicy，2026-09-17 补 —— 见 mcRestrictRelease）。
+  //    专门发 **`agent-preset/selected`**（宿主 emit，两个位置参数 `(sessionId, presetId)`）。
+  //    当时没挂它 → 策略与提示词都不会生效。
+  //    每个 agent：① 是 MC/MC+ 模式就按档套策略并投提示行（applyMcModePolicy）
+  //    ② 不是就**切到"非 MC"档**（liftMcModePolicy —— 释放旧限制 + 把 mc/mckit 摘出可见面）。
   ctx.effect(() => {
     const handlers = []
     const touch = (agent) => {
@@ -3687,7 +3813,7 @@ export function apply(ctx, rawConfig) {
       // ⚠️ 这里**不再**建 `.whale-craft/` —— 建文件只发生在"首次发起 MC 模式会话"
       //    （applyMcModePolicy 里）和"点开 MC设置"（HTTP 接口里）这两个时机（用户 2026-09-16 定）。
       try {
-        // 🔴 2026-09-17：**两个方向都要处理** —— 是 MC 模式就套用，**不是就撤销**。
+        // 🔴 2026-09-17：**两个方向都要处理** —— 是 MC 模式（含 MC+）就套用，**不是就切到非 MC 档**。
         //    以前只"套用"，于是 MC模式 → 标准模式 的会话会一直留着 MC 白名单（没有 pwsh），
         //    表现就是"标准模式会话无法执行命令"（用户真机报的，见 mcRestrictRelease 的说明）。
         if (isMcModeAgent(agent)) applyMcModePolicy(agent)
@@ -3700,9 +3826,11 @@ export function apply(ctx, rawConfig) {
     // 模式被选上/切换：两个位置参数，agent 要自己找回来
     try {
       handlers.push(ctx.on('agent-preset/selected', (sessionId, presetId) => {
-        // 🔴 两个方向都记：切到 MC模式 才进兜底名单，切走要**移出去**（否则前端入口判据会残留）
+        // 🔴 两个方向都记：切到 MC模式（含 MC+）才进兜底名单，切走要**移出去**（否则前端入口判据会残留）
         if (pluginConfig.isMcModePreset(presetId)) mcModeAgentIds.add(String(sessionId))
         else mcModeAgentIds.delete(String(sessionId))
+        if (pluginConfig.isMcPlusPreset(presetId)) mcPlusAgentIds.add(String(sessionId))
+        else mcPlusAgentIds.delete(String(sessionId))
         touch(safeAgentById(sessionId))
       }))
     } catch { /* 老宿主没有这个事件 */ }
@@ -3758,13 +3886,14 @@ export function apply(ctx, rawConfig) {
   ctx.tools.register(asTool({
     name: 'mc_admin_config',
     description: '【管理】读写 whale_craft 的**全局配置**（服务器指令白名单、MC 模式的工具暴露、记忆目录…）。\n'
-      + '⚠️ **只有非 MC 模式的会话能用**：麦块模式会话看不见、也调不动它（要改配置就在普通会话里改）。\n'
+      + '⚠️ **MC 模式会话看不见、也调不动它**（要改配置就在普通会话或 MC+模式 里改）。\n'
       + 'action：\n'
       + '· get（默认）看生效配置；给 path 只看某一项\n'
       + '· set   改一项（path + value）\n'
       + '· unset 删掉一项（回到默认值）· reset 全部恢复默认 · list 看默认值 + 生效值\n'
       + '可用键：`commandWhitelist`（字符串数组；支持 "tp" 精确名、"/^gi.*/" 正则、"*" 全放行）· '
-      + '`mcModePresets`（哪些 preset 算 MC 模式）· `mcMode.allowOtherTools`（MC 模式白名单里**额外**放行的工具）· '
+      + '`mcModePresets`（哪些 preset 算 MC 模式——应含 MC+ 的 id）· `mcPlusPresets`（哪些算 MC+ 变体：'
+      + '开放标准模式全部工具）· `mcMode.allowOtherTools`（MC 模式白名单里**额外**放行的工具）· '
       + '`mcMode.hideAdminTools`（默认 true）· `expressMode`（文件分享：off 关闭 / online 在线）· '
       + '`expressBase`（在线模式的 base，如 https://example.com）· `memoryDir`。\n'
       + '改完**立即生效**，落在 `$DSH_HOME/whale_craft/config.json`。（白名单只能"收窄"，不能凭空添加 preset 没挂的工具。）',

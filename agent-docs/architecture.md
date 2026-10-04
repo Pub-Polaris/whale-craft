@@ -34,7 +34,8 @@ DSH host 进程
    │   ├─ /api/mc/*                     状态/停止/设置（账户/配置/提示词/分享/preset 名单）
    │   └─ /api/whale-craft/express/*    发布区文件（仅 online 模式注册）
    ├─ agent/pre-step 监听   提示词注入（改写 decision.messages）+ MC 模式策略对账
-   ├─ ensureMcPreset        启动自举/自检「MC模式」preset
+   ├─ presets/*.patch.yml   包内声明「MC模式」「MC+模式」两个 preset（dsh.bundle.patch 数组）
+   ├─ ensureMcPreset        旧宿主遗留：目录式自举（新宿主上 no-op）
    ├─ installArchiveGuard   包装 workspaceRegistry.archiveSession
    └─ extensions/*.mjs      自动加载（apply(api)）
 
@@ -96,13 +97,15 @@ DSH host 进程
 
 ## 6. 提示词注入体系（唯一通道 = 插件提示行）
 
-**本插件不往系统提示词里塞任何东西**。注入 = 往会话投"插件提示行"，共 4 条内容：
+**本插件不往系统提示词里塞任何东西**。注入 = 往会话投"插件提示行"，常规 4 条
+（MC+ 会话再加 1 条模式说明，共 5 条）：
 
 | 顺序 | 内容 | 开关（默认；前两个**按工作区**，存 `<工作区>/.whale-craft/config.json`） |
 | --- | --- | --- |
 | 1 | 工作区根 `AGENTS.md`（宿主原生文件，插件再补一份） | `injectWorkspaceAgentsMd`（关） |
 | 2 | `.whale-craft/RULES.md`：行事准则（称呼/记忆/看门狗/登服/聊天/建筑/硬规矩） | `injectWhaleCraftAgentsMd`（开） |
 | 3 | **版本硬提示词**（硬编码随版本发布：哪些工具不成熟、怎么把文件给用户看） | 无开关 |
+| 3.5 | **MC+ 模式说明**（仅 MC+ 会话：标准工具全量 / 文件全工作区 / mc/mckit 不变） | 无开关 |
 | 4 | 记忆总索引：`.whale-craft/README.md` + 自动目录树 | 无开关 |
 
 - **挂载点**：`agent/pre-step` waterfall（放行前**必须 `next()`**），把提示行改写进 `decision.messages` 的**本步最前**（不能塞 `inbox.nextStep` —— 宿主 `preStep()` 先 `inbox.claim()` 再跑瀑布，塞队列会晚一步）。
@@ -112,27 +115,44 @@ DSH host 进程
 - **受保护文件对 AI 只读**（RULES.md / AGENTS.md / config.json；文件工具 guard + `MemoryStore` 写方法两条路，判定统一在 `src/protected.mjs`）。`rulesFollowVersion`（默认开，**按工作区**）靠 config.json 的 `rulesVersion` 字段在新版本时整体替换；首次见到无记录只记版本不覆盖。旧工作区单独的 `.rules-version` 标记会在"备好记忆目录"时机迁入 config.json 并删除（迁移见 `src/wsconfig.mjs`）。
 - **消息构造**走 `src/user-message.mjs`：宿主 `@deepseek-ai/dsh-llm` 的 `createUserMessage` 优先、拿不到用自带等价实现 —— 因为该包曾漏进依赖声明，导致"工具都在、提示词全无"（详见 [history.md](history.md)）。
 
-## 7. MC 模式与权限隔离（双保险）
+## 7. MC模式 / MC+模式 与权限隔离（三档）
 
-判据 `isMcModeAgent`：`agentPresets.composedPreset` ∈ `mcModePresets`（默认 `['minecraft','whale_craft']`）。
+判据：`isMcModeAgent`（preset ∈ `mcModePresets`，默认 `['minecraft','minecraft-plus','whale_craft']`）；
+变体：`isMcPlusAgent`（再 ∈ `mcPlusPresets`，默认 `['minecraft-plus']`）。两个 preset 由本包
+`presets/*.patch.yml` 声明提供（见 §8）。工具策略是一个三档状态机（`mcPolicyKind` + `mcRestrictRelease`，
+kind 变化先 release 再套新）：
 
-1. **`tools.restrict({allow})`**（无条件白名单）：`mc_*`（按 `hideAdminTools` 去掉 `mc_admin_*`）+ `mc_kit_*` + 文件工具（`read/write/edit/glob/grep/read_image`）+ `present` + `mcMode.allowOtherTools`。宿主的 `pwsh/subagent/workflow/serve_*` 一个都看不见。⚠️ 只能**收窄** —— 不能凭空添加 preset 没挂的工具（宿主报错里 `known global tools:` 可直接解析）；`restrict` 是**黏性**的，切换靠 disposer。
-2. **`guard`**（服务端硬拒，`index.js` apply 内注册）：① `mc_admin_*` 硬拒；② 文件类工具参数命中凭据路径（`.credentials`/`credentials.yaml`/`/.dsh/`）、`/secrets/` → 硬拒（读写都不行）；③ **受保护文件**（`src/protected.mjs`：RULES.md / AGENTS.md / config.json）**可读不可写** —— `write|edit` 与记忆工具写动作命中即拒，读类工具放行（判定 = 路径写法命中 或 解析到记忆根后正好是该文件）；④ 文件工具路径必须落在 `<工作区>/.whale-craft/` 内，**空路径也算越界**；⑤ `present` 的文件路径必须在会话工作区内。
-3. **无工作区 → 整体拒绝**：会话没选工作区时，**不套隔离、不注入、不建记忆目录**；「MC设置」API 400 并说明原因（`noWorkspaceRefused`）。
-4. 模式切换触发点：`agent/created`、`agent/session-start`、`agent-preset/selected` 三个钩子里双向对账（进套用/出撤销）；`liftMcModePolicy` 撤销时要**撤回提示行**（漏撤回曾是"标准模式没 pwsh"的事故）。
+| 档 | preset | 可见性（`applyMcModePolicy`） | guard（每次调用现场判，切模式自愈） |
+| --- | --- | --- | --- |
+| `mc` | minecraft | `restrict({allow})` 白名单：mc_*（按 `hideAdminTools` 去 / 留 `mc_admin_*`）+ mc_kit_* + 文件工具 + present + `mcMode.allowOtherTools` | ① admin 硬拒 ② 凭据/secrets 硬拒 ③ 受保护文件只读 ④ 文件 jailed `.whale-craft/`（空路径也算越界）⑤ present 限会话工作区 |
+| `mc-plus` | minecraft-plus | **不套 restrict**（组成=标准全表，mc/mckit 走全局注册直接可见；`mc_admin_*` 也可见） | 仅②凭据/secrets 硬拒（文件全工作区；受保护文件按宿主默认） |
+| `other` | 其余 | `restrict({deny})`：`mc_*`（mc_admin_* 除外）+ `mc_kit_*` 从可见面摘掉 | **拒调** mc_* / mc_kit_*（mc_admin_* 除外）—— "不再给其他模式暴露"的第二道锁 |
 
-## 8. MC 模式 preset 自举（ensureMcPreset）
+- ⚠️ 白名单只能**收窄**：不能凭空添加 preset 没挂的工具（宿主报错里 `known global tools:` 可直接解析后过滤重试）；`restrict` 是**黏性**的，切换靠 disposer。
+- **无工作区 → 整体拒绝**：会话没选工作区时，MC/MC+ 都不套策略、不注入、不建记忆目录；「MC设置」API 400 并说明原因（`noWorkspaceRefused`）。
+- 模式切换触发点：`agent/created`、`agent/session-start`、`agent-preset/selected` 三个钩子里双向对账（`touch` → apply/lift）；`liftMcModePolicy` 撤回提示行 + 切到 `other` 档（漏撤回曾是"标准模式没 pwsh"的事故）。
+- 看门狗闸门 `watchdogGate` 现场判 `isMcModeAgent`（两档都放行，切出闭嘴）。
 
-约束与事实：
+## 8. MC模式 / MC+模式 的 preset（0.2.0-rc.2+：包内声明）
 
-- 宿主 preset authoring **只允许整目录复制**（`agentPresets.copy(源, 新id, 显示名)`），调用方不得提供 composition 文本；
-- preset id 必须是目录名规则 `^[a-z0-9][a-z0-9-]*$` —— 默认名单里的 `whale_craft` **带下划线、永远不是合法 preset id**，所以自动建的目标 id 取 `mcModePresets` 里第一个合法的（`pickPresetTarget`，默认 = `minecraft`）；源优先 `minimal` → `standard` → `ptc`（`pickPresetSource`）。
-- 启动时（`ctx.inject(['agentPresets'])` 后 `void ensureMcPreset().catch(仅记日志)`——**绝不让 rejection 触发宿主 fail-loud exit**）：
-  - 若 `mcModePresets` 里**一个都不存在** → 复制官方源建「MC模式」，然后打三个补丁：persona 换一句话（去掉官方 `complete: true` / `includeRuntimeContext: false`）、关掉 persistent-shell、补工具组（`tool-fs` / `tool-jobs` / `present` / `compaction`，加之前用**同步 `svc.roots` 扫目录**探测包是否存在——用 async `list()` 会静默失效，GitHub issue #1 的根因）；
-  - 若存在 → `planPresetAction`（src/config.mjs）决策 `leave / meta / rebuild`：只看显示名/简介不对 → 只修显示文本；**组成**是"我们当初复制的那份"而官方源变了（或 `MC_PRESET_SPEC` 规格升版）→ 备份 `<id>.bak-<时间>` 后重新复制；**只要你动过组成就绝不碰**。
-- 判定"这份是不是我建的、有没有被改过"靠 preset 目录里的自建标记 `.whale-craft.json`（`createdBy/spec/source/compositionHash`）。
-- 每次启动还自检自建 preset 的 persona 键名（老 DSH `text` / 新 DSH `prefix`，`PERSONA_TEXT_KEYS`）。
-- 隔离实例用 `WHALE_CRAFT_NO_PRESET_WRITE=1` 禁止写 preset。
+宿主 0.2.0-rc.2 起 preset 是**声明式注册表**：一条 `@deepseek-ai/dsh-agent-preset` 插件行 = 一个 preset
+（config `{id, name, description, order, plugins[]}`）；注册表**不扫目录**、也没有 `copy`/authoring 接口。
+本包经 `package.json → dsh.bundle.patch` **数组**携带两个声明补丁：
+
+- `presets/minecraft.patch.yml` → 「MC模式」（id `minecraft`，order 5）：persona（定稿原文）+
+  `tool-fs` + `tool-jobs`（看门狗挂 job 需要）+ `present` + `compaction` 整组。**不含**标准工具
+  （运行时白名单再收一道，见 §7）。
+- `presets/minecraft-plus.patch.yml` → 「MC+模式」（id `minecraft-plus`，order 6）：官方
+  `dsh-web-app/presets/standard.patch.yml` 的**手抄副本**（persona 换成 MC 的；含 agent-instructions /
+  pwsh / 子代理 / 计划 / 网络 / skills / 压缩等全表）。⚠️ 声明式 preset 没有继承机制 —— 宿主更新
+  standard 组成**不会**自动并入，升级宿主后需人工对照刷新（文件头注释有注记）。
+- 用户自定义：Web 编辑器（或 profile 的 `cordis.patch.yml`）按**行 id**（`preset-minecraft` /
+  `preset-minecraft-plus`）覆盖 `config.plugins`；不要直接改包内文件（包更新会覆盖）。
+
+**遗留（旧宿主）**：`ensureMcPreset` 那套（`svc.copy` 整目录复制 + 改 `agent.cordis.yml` +
+`.whale-craft.json` 自建标记 + `MC_PRESET_SPEC` 重建 + persona 键名 `prefix/text` 自检）只对
+**有目录式 preset / authoring copy 的旧宿主**有意义 —— 在新宿主上 `svc.copy` 不存在，整段 no-op。
+相关纯函数（`planPresetAction`/`pickPresetTarget`/…）与测试都还在，见 history.md / src-modules.md。
 
 ## 9. HTTP 面与安全
 
@@ -142,7 +162,7 @@ DSH host 进程
 | --- | --- |
 | GET `/api/mc/status?sessionId=` | 状态条轮询（`active/online/reconnecting/busy/connection/timeouts/watch`…） |
 | GET `/api/mc/sessions` | 会话列表（调试） |
-| GET `/api/mc/mode?sessionId=` | preset 判据 + hasWorkspace + 注入诊断（**可重试兜底**用，前端主判据在本地） |
+| GET `/api/mc/mode?sessionId=` | preset 判据（`mcMode` / `mcPlus`）+ hasWorkspace + 注入诊断（**可重试兜底**用，前端主判据在本地） |
 | GET `/api/mc/presets` | preset 名单（**必须在 settingsGate 之前**，否则前端静默兜底） |
 | POST `/api/mc/stop` | 强制停止（`cancelTurn: true`） |
 | `/api/mc/accounts`（GET/POST/PATCH/DELETE）+ `/accounts/refresh` | 账户 CRUD / 改名 / 探测刷新（`probeBot.authOnly`） |
@@ -192,7 +212,7 @@ DSH host 进程
 1. `agent/pre-step` waterfall **必须 `next()`**（不交棒 = 全崩，0.1.4 P0）。
 2. `tools.restrict` 的**黏性**语义与 disposer；`agent-preset/locked`。
 3. `workspaceRegistry.archiveSession` 内部方法（归档保护包装点）。
-4. `agentPresets.copy` 的 authoring 契约（只允许整目录复制）；`svc.roots` 同步 vs `list()` async（issue #1）。
+4. preset 体系：0.2.0-rc.2+ 是**声明式注册表**（`@deepseek-ai/dsh-agent-preset` 行 + `dsh.bundle.patch` **数组**；注册表不扫目录、无 copy）——两个 preset 靠包内 `presets/*.patch.yml` 声明。旧宿主遗留：`agentPresets.copy` authoring 契约（整目录复制）、`svc.roots` 同步 vs `list()` async（issue #1）。
 5. preset persona 键名（`text` → `prefix`）；`complete` / `includeRuntimeContext` 的压制关系。
 6. `@deepseek-ai/dsh-llm` 的 `createUserMessage` 可用性（缺失时走自带兜底，但**依赖声明不能少**）。
 7. `sessionController.prompt` 是 @Remote（必传 signal）；`agent.steer` 在 step 边界的消费语义。

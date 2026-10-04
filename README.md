@@ -20,7 +20,7 @@
 
 ## 使用
 
-1. 创建新对话，选中「MC模式」。
+1. 创建新对话，选中「MC模式」（只玩 MC 时）或「MC+模式」（除 MC 工具外，还要标准模式的全部工具时）。
 2. **选中或新建一个工作区**（记忆与提示词都放在它的 `.whale-craft/` 里）。
 3. 如有必要，进入「MC设置」修改玩家名称，或使用第三方皮肤站登录。
 4. 对你的 AI 说「进 xx 服务器」。
@@ -82,7 +82,7 @@ dsh plugin --profile web add link:/path/to/whale-craft
 | 插件日志 | `$DSH_HOME/whale_craft/logs/whale-craft.log`（可用 `MC_LOG` 覆盖） |
 | 会话锁（连服期间） | `$DSH_HOME/whale_craft/.instance.<会话>.json` |
 | **记忆 / 提示词** | **`<会话工作区>/.whale-craft/`**：`README.md`（AI 维护的总索引）+ `RULES.md`（行事准则）+ 任意文档/图片 |
-| **按工作区的配置** | `<会话工作区>/.whale-craft/config.json`（提示词三个开关 + 版本标记；对 MC 模式 AI **只读**） |
+| **按工作区的配置** | `<会话工作区>/.whale-craft/config.json`（提示词三个开关 + 版本标记；对 MC模式 AI **只读**，MC+ 按宿主默认） |
 | 出图与发布 | `<会话工作区>/.whale-craft/.out/`（**不对外**）· `<会话工作区>/.whale-craft/.express/`（可访问，见下） |
 
 > 记忆是**按会话工作区**的，与插件装在哪、DSH 装在哪都无关。
@@ -96,23 +96,24 @@ dsh plugin --profile web add link:/path/to/whale-craft
 **已有会话**时落在**对话标题条的操作区**。点开就是账户 / 指令白名单 / 提示词 / 文件分享四个标签页。
 改完立即生效。配置分两层：
 
-- **全局**（`$DSH_HOME/whale_craft/config.json`）：非 MC 模式下的 AI 可以用 `mc_admin_config` 工具改
+- **全局**（`$DSH_HOME/whale_craft/config.json`）：**普通模式与 MC+模式**下的 AI 可以用 `mc_admin_config` 工具改
   （**MC 模式会话看不见、也调不动它**）：
 
 | 键 | 含义 | 默认 |
 | --- | --- | --- |
 | `commandWhitelist` | `mc_command` 放行的服务器指令。支持精确名 `"tp"`、正则 `"/^gi.+/"`、`"*"` 全放行 | tp/give/time/… |
 | `allowAllCommands` | 指令白名单页那个总开关 | `false` |
-| `mcModePresets` | 哪些 preset 算"MC 模式"（权限隔离的判据） | `["minecraft","whale_craft"]` |
-| `mcMode.allowOtherTools` | MC 模式白名单里**额外**放行的其它工具（默认只给 `mc_*` / `mc_kit_*` / 文件工具 / `present`） | `[]` |
-| `mcMode.hideAdminTools` | 是否把 `mc_admin_*` 也放进白名单（默认隐藏，另有 guard 硬拒） | `true` |
+| `mcModePresets` | 哪些 preset 算"MC 类模式"（含 MC+；权限隔离与提示词注入的判据） | `["minecraft","minecraft-plus","whale_craft"]` |
+| `mcPlusPresets` | 其中哪些是 **MC+ 变体**（开放标准模式全部工具） | `["minecraft-plus"]` |
+| `mcMode.allowOtherTools` | MC 模式白名单里**额外**放行的其它工具（默认只给 `mc_*` / `mc_kit_*` / 文件工具 / `present`；MC+ 不适用——它本来就不限制） | `[]` |
+| `mcMode.hideAdminTools` | 是否把 `mc_admin_*` 也放进 MC 模式的白名单（默认隐藏，另有 guard 硬拒；MC+ 可见） | `true` |
 | `expressMode` | 文件分享：「文件分享」页选的模式：`off` 关闭 / `online` 在线 | `"off"` |
 | `expressBase` | 在线模式的 base（你访问这台 DSH 的地址，可带路径前缀） | `""` |
 | `memoryDir` | 记忆根目录（`null` = 用会话工作区的 `.whale-craft/`） | `null` |
-| `ensureMcPreset` | 启动时若 `mcModePresets` 里**一个 preset 都不存在**，就复制官方 `minimal` 建一个「MC模式」（已存在则绝不动） | `true` |
+| `ensureMcPreset` | **旧宿主遗留**：0.2.0-rc.2+ 的 preset 由包内 `presets/*.patch.yml` 声明提供，这个自动创建开关在新宿主上是 no-op | `true` |
 
 - **按工作区**（`<工作区>/.whale-craft/config.json`，与 RULES.md 同目录；在「MC设置 → 提示词」页改，
-  对 MC 模式的 AI **只读**）：每个工作区独立一份，互不影响。
+  对 MC模式的 AI **只读**、MC+ 按宿主默认）：每个工作区独立一份，互不影响。
 
 | 键 | 含义 | 默认 |
 | --- | --- | --- |
@@ -147,7 +148,7 @@ dsh plugin --profile web add link:/path/to/whale-craft
 | --- | --- | --- |
 | **游戏内** `mc_*` | 25 | `mc_status` `mc_ping` `mc_connect` `mc_lan` `mc_accounts` `mc_capabilities` `mc_disconnect` `mc_stop` `mc_config` `mc_sessions` `mc_diag` `mc_say` `mc_events` `mc_watch` `mc_map` `mc_scan` `mc_entities` `mc_inventory` `mc_move` `mc_act` `mc_dig` `mc_build` `mc_give` `mc_sequence` `mc_command` |
 | **游戏外辅助** `mc_kit_*` | 3 | `mc_kit_memory`（记忆树：按服/主题定位、`key` 覆盖、搜索、删除、把文件与图片**存进记忆**）· `mc_kit_image`（SVG→PNG / 引图 / 拼网格）· `mc_kit_express`（把发布区里的文件按「文件分享」模式换成路径 / URL / 一句提示） |
-| **管理** `mc_admin_*` | 1 | `mc_admin_config`（读写全局配置；**MC 模式看不见、也调不动**） |
+| **管理** `mc_admin_*` | 1 | `mc_admin_config`（读写全局配置；**MC 模式看不见、也调不动**；普通模式与 **MC+模式** 可见可用） |
 
 几个设计点：
 
@@ -175,21 +176,24 @@ dsh plugin --profile web add link:/path/to/whale-craft
 
 ---
 
-## MC 模式与权限隔离
+## MC模式 / MC+模式 与权限隔离
 
 > 不止是权限隔离，有限的工具暴露可以让 AI 更专注于 MC 交互。
 
-把会话的 preset 设成 `mcModePresets` 里的一员（默认 `minecraft` / `whale_craft`），该会话就会：
+两个模式（preset 由插件随包声明，见下一节）：
 
-1. **只看得见白名单里的工具**（`tools.restrict({allow})`，无条件生效）：
-   `mc_*` / `mc_kit_*` + **文件工具**（`read` / `write` / `edit` / `glob` / `grep` / `read_image`）
-   + `present`（宿主有就放行）+ 你在 `mcMode.allowOtherTools` 里额外点名的。
-   宿主的 `pwsh` / `subagent` / `workflow` / `serve_*` 之类**一个都看不见**。
-2. **文件工具被关进记忆文件夹**：它们的路径由全局 `guard` 硬限在 `<工作区>/.whale-craft/` 内
-   （**不给路径**也算越界 = 拒绝；`.dsh` 凭据、`secrets/`、行事准则另有硬拒）。
-3. **管理工具看不见也调不动**（白名单 + `guard` 双保险）。
-4. 收到几条**插件提示行**（在对话里看得见、可折叠，**不是**用户发言）：见下一节。
-5. 系统提示词 = preset 自己的 persona（**宿主按 preset 自动注入，插件不插手**）。
+| | **MC模式**（`minecraft`） | **MC+模式**（`minecraft-plus`） |
+| --- | --- | --- |
+| 工具面 | 只给 `mc_*`（admin 除外）/ `mc_kit_*` + 文件工具（`read`/`write`/`edit`/`glob`/`grep`/`read_image`）+ `present` + `mcMode.allowOtherTools`；宿主的 `pwsh` / `subagent` / `workflow` / `serve_*` **一个都看不见** | **标准模式的全部工具** + mc/mckit 全量（`mc_admin_*` 也可见） |
+| 文件工具边界 | 由 `guard` 硬限在 `<工作区>/.whale-craft/` 内（**不给路径**也算越界；`.dsh` 凭据、`secrets/` 另有硬拒） | 可在**整个会话工作区**使用（受保护文件按宿主默认；凭据路径仍然硬拒） |
+| 提示词 | RULES.md / 版本提示 / 记忆索引（见下一节） | 同上，**再加一条 MC+ 模式说明** |
+| 看门狗 / 长期记忆 / 「MC设置」 | ✓ | ✓ |
+
+**除这两个模式外，其他模式（standard / minimal / …）不再暴露 `mc_*` / `mc_kit_*`**：
+可见面摘掉（`tools.restrict({deny})`）+ `guard` 硬拒双保险。`mc_admin_config` 是例外 ——
+它的用途就是在普通会话里管理插件，普通模式与 MC+模式 都可见可用，只有 MC模式 看不见也调不动。
+
+> 系统提示词 = preset 自己的 persona（**宿主按 preset 自动注入，插件不插手**）。
 
 ---
 
@@ -257,24 +261,22 @@ dsh plugin --profile web add link:/path/to/whale-craft
 
 ---
 
-## 「MC模式」preset 会自己长出来
+## 「MC模式」/「MC+模式」两个 preset 从哪来
 
-**第一次装好没有「MC模式」？** 插件会**自己建一个**：启动时发现 `mcModePresets`（默认 `minecraft` / `whale_craft`）
-里一个都不存在，就调用 DSH 官方接口 `agentPresets.copy('minimal', 'minecraft', 'MC模式')`
-—— **整目录复制官方极简模式**（DSH 的 authoring 只允许这样建），然后：
+DSH 0.2.0-rc.2 起 preset 是**声明式**的：一条 `@deepseek-ai/dsh-agent-preset` 插件行 = 一个模式。
+本插件随包（`package.json → dsh.bundle.patch` 数组）带两个声明文件，装好即出现：
 
-- **persona 换成一句**："你在一台真实的 Minecraft Java 版服务器里扮演一名玩家：你的"身体"是一台无头机器人，
-  能观察世界、移动、挖掘和建造。"（官方 `minimal` 那句"helpful software engineer assistant"、以及它的
-  `complete: true` / `includeRuntimeContext: false` 都会被去掉 —— 后者会压掉所有其它提示段）；
-- **关掉持久 shell**（本模式没有 shell，别让模型看见 `pwsh`）；
-- **补齐本模式需要的工具组**：`tool-fs`（文件工具）· `tool-jobs`（后台任务控制器，看门狗要挂 job）·
-  `present`（显式文件交付）—— 官方 `minimal` 里一个都没有。🔴 加之前会先探"这个部署里到底有没有那个包"
-  （看随附 preset 有没有人引用它），探不到就绝不加，免得把 preset 弄挂。
-- **已经有一个就绝不动它**；不想要这个行为就把 `ensureMcPreset` 关掉。
-- 每次启动还会**自检那个自建的 preset**（插件升级 / DSH 升级后它可能过期）：显示名/简介/排序不对 → 只修显示文本；
-  组成还是"我们当初复制的那份"而官方源变了（或自建规格变了）→ **重新复制一遍**（旧目录先备份成
-  `<id>.bak-<时间>`）。**只要你动过组成，就一律不碰** —— 它靠一个 `.whale-craft.json` 自建标记判断
-  "这份是不是我建的、有没有被改过"。
+- `presets/minecraft.patch.yml` → 「**MC模式**」：persona（MC 人设定稿那句）+ 文件工具 + job controller
+  （看门狗要挂 job）+ `present`（显式文件交付）+ 压缩组。**不含**任何标准工具 —— 工具面由运行时白名单
+  再收一道（见上一节）。
+- `presets/minecraft-plus.patch.yml` → 「**MC+模式**」：官方 standard 模式的**全表**（persona 换成 MC 的），
+  标准模式有什么工具，它就有什么（另外照常带 MC / mc_kit 工具）。
+
+想自定义组成：用会话里的 **Web 编辑器**（改动按行 id `preset-minecraft` / `preset-minecraft-plus`
+存进 profile 的补丁层，不跟插件抢文件）；卸载插件，这两个模式随之消失。
+
+> **旧宿主遗留**：目录式 preset（`agentPresets.copy` 那代）上仍走 `ensureMcPreset` 自动建
+> `~/.dsh/.agent-presets/minecraft` 那套逻辑；它在 0.2.0-rc.2+ 的新宿主上是 no-op。
 
 ---
 
@@ -411,7 +413,8 @@ provides them they are reused as-is; when it cannot (e.g. the stock dsh-desktop,
 
 ### Use
 
-1. Start a new conversation and pick the **MC mode** preset.
+1. Start a new conversation and pick the **MC mode** preset (game-only), or **MC+ mode** (adds all
+   standard-mode tools on top of the MC toolset).
 2. **Pick or create a workspace** — memory and the prompt live in its `.whale-craft/`.
 3. Optionally set the player name in **MC Settings**, or sign in with a third-party (Yggdrasil) account.
 4. Tell your agent which server to join.

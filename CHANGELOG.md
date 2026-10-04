@@ -4,6 +4,26 @@
 
 ## [未发布]
 
+### 🎉 新增（「MC+模式」：在 MC模式基础上开放标准模式全部工具；「MC模式」全面转向声明式 preset）
+
+- **两个模式**均由包内声明提供（DSH 0.2.0-rc.2+ 的声明式 preset 注册表）：
+  `presets/minecraft.patch.yml`（「MC模式」，显示名/简介/工具面与以前一致）+
+  `presets/minecraft-plus.patch.yml`（「MC+模式」= 官方 standard 模式全表 + MC 工具，persona 换成 MC 的）。
+  经 `dsh.bundle.patch` **数组**随包挂载，装好即出现在模式列表；用户可用 Web 编辑器按行 id 覆盖组成。
+  旧宿主的目录式自举（`ensureMcPreset`）原样保留，在新宿主上是 no-op（`svc.copy` 不存在）。
+- **工具暴露三档**（判据 `mcModePresets` + 新增 `mcPlusPresets`）：
+  MC模式 = 原有白名单；MC+模式 = **不限制**（标准工具全量 + mc/mckit 全量，`mc_admin_*` 可见）；
+  **其他模式不再暴露 `mc_*` / `mc_kit_*`**（可见面 `restrict({deny})` 摘掉 + guard 硬拒双保险；
+  `mc_admin_*` 保留 —— 它的用途就是在普通会话里管理插件）。
+- **MC+ 文件边界**（用户 2026-10-04 定）：文件工具可读写**整个会话工作区**；mc / mc_kit 工具行为与
+  MC模式一致（记忆仍在 `.whale-craft/`）；受保护文件按宿主默认（不再加插件只读 guard）；
+  凭据 / `secrets/` 路径**两种 MC 模式都仍硬拒**。
+- **提示词适配**：MC+ 会话在 RULES / 版本提示 / 记忆索引之外多投一条「MC+ 模式说明」（无开关）；
+  `/api/mc/mode`、注入状态（「MC设置 → 提示词」页与 `mc_diag`）都会报 `mcPlus`，UI 显示「MC+模式」。
+- **引擎范围**：`engines.dsh` 与两个 dsh peer 的下限抬到 `>=0.2.0-rc.2`（插件已面向 0.2.0-rc.2+ 开发）。
+- **自检**：新增声明文件逐字断言（id/显示名/简介原文/persona/必需插件行）、三档策略与 guard 分档、
+  MC+ 第 4 条提示行、`mcPlusPresets` 校验、client 兜底名单；受影响的旧断言同步更新。
+
 ### 🔴 修复（干净环境 / 官方 dsh-desktop 安装后 `failed to import`：顶层静态 import 了两个**永不安装**的宿主包）
 
 - **现象**（GitHub issue #5）：npm 装出来的插件、或官方 dsh-desktop 上，启动只报一句

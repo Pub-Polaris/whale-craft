@@ -61,8 +61,12 @@ export const DEFAULT_CONFIG = {
     'gamemode', 'effect', 'enchant', 'setblock', 'fill', 'clone', 'summon',
     'title', 'spawnpoint', 'difficulty', 'kill', 'clear', 'xp', 'experience',
   ],
-  /** 哪些 agent preset 算"MC 模式"（用来做权限隔离：MC 模式不能用管理工具） */
-  mcModePresets: ['minecraft', 'whale_craft'],
+  /**
+   * 哪些 agent preset 算"MC 模式"（含 MC+ 变体；用来做权限隔离与提示词注入）。
+   * 两个官方 id 由本包的 `presets/*.patch.yml` 声明提供（DSH 0.2.0-rc.2+）；
+   * `whale_craft` 是历史名单项（保底，正常不可能是合法 preset id）。
+   */
+  mcModePresets: ['minecraft', 'minecraft-plus', 'whale_craft'],
   mcMode: {
     /**
      * **额外**允许 MC 模式会话使用的其它工具（whale_craft 自己的工具与文件工具永远在白名单里）。
@@ -79,6 +83,15 @@ export const DEFAULT_CONFIG = {
     /** 是否把 mc_admin_* 也放进白名单（默认 false = 隐藏；隐藏之外 guard 仍会硬拒） */
     hideAdminTools: true,
   },
+  /**
+   * `mcModePresets` 里哪些算 **MC+ 变体**（在 MC 模式基础上开放标准模式全部工具）。
+   *
+   * ⚠️ 这些 id 也应包含在 `mcModePresets` 里（不然整体不按 MC 会话处理）；
+   * 判据见 `isMcPlusPreset` 与 index.js 的 `isMcPlusAgent`。
+   * MC+ 不套工具白名单（标准工具全量 + mc/mckit 全量），文件工具不受 `.whale-craft/` 限制；
+   * guard 对它只保留凭据路径拒绝。
+   */
+  mcPlusPresets: ['minecraft-plus'],
   /** 记忆根目录；null = `<工作区>/.whale-craft` */
   memoryDir: null,
   /** 「MC设置 → 指令白名单」页的开关：允许所有服务器指令（默认关 = 只放行白名单里的） */
@@ -88,6 +101,12 @@ export const DEFAULT_CONFIG = {
    * 旧全局值只作迁移 seed 用一次 —— 见 `PluginConfig.legacyPromptSwitches()`。 */
   /**
    * 启动时若 `mcModePresets` 里**一个都不存在**，就自动建一个「MC模式」preset。
+   *
+   * ⚠️ **遗留（旧宿主）**：2026-10-04 起本包面向 DSH 0.2.0-rc.2+ 开发——新宿主的 preset 是
+   * 声明式的，由包内 `presets/minecraft.patch.yml` / `presets/minecraft-plus.patch.yml`
+   * 随 `dsh.bundle.patch` 直接声明（不需要自动创建；本开关在新宿主上是 no-op，因为新宿主
+   * 的 `agentPresets` 服务没有 `copy`）。这段自动创建逻辑只对**旧宿主**（有目录式 preset /
+   * authoring copy 的那代）有意义，保留是为了不无谓破坏旧部署。
    *
    * 2026-09-16 用户定的：插件**不塞** preset 目录，但"没有 preset 就没有 MC 模式"这件事必须自己解决
    * —— preset 属于用户的 `$DSH_HOME/.agent-presets/`，新机器上没人建过，插件就永远认不出 MC 会话。
@@ -513,6 +532,11 @@ export class PluginConfig {
     return Array.isArray(v) ? v.map(String) : []
   }
 
+  get mcPlusPresets () {
+    const v = this.get('mcPlusPresets')
+    return Array.isArray(v) ? v.map(String) : []
+  }
+
   get mcMode () {
     const v = this.get('mcMode')
     return {
@@ -540,6 +564,13 @@ export class PluginConfig {
   isMcModePreset (presetId) {
     if (!presetId) return false
     return this.mcModePresets.includes(String(presetId))
+  }
+
+  /** 这个 preset id 算不算 MC+ 变体（须同时是 MC 模式，见 `mcPlusPresets` 注释） */
+  isMcPlusPreset (presetId) {
+    if (!presetId) return false
+    const id = String(presetId)
+    return this.mcModePresets.includes(id) && this.mcPlusPresets.includes(id)
   }
 
   /**
@@ -580,7 +611,11 @@ function validate (top, rest, value) {
     return
   }
   if (top === 'mcModePresets') {
-    if (!isStrArray) throw new Error('mcModePresets 必须是字符串数组（如 ["minecraft","whale_craft"]）')
+    if (!isStrArray) throw new Error('mcModePresets 必须是字符串数组（如 ["minecraft","minecraft-plus"]）')
+    return
+  }
+  if (top === 'mcPlusPresets') {
+    if (!isStrArray) throw new Error('mcPlusPresets 必须是字符串数组（如 ["minecraft-plus"]）')
     return
   }
   if (top === 'memoryDir') {

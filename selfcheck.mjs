@@ -1606,6 +1606,36 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     console.log(`  ${/svc\.copy\(source, target, MC_PRESET_NAME\)/.test(src) ? '✅' : '❌'} 用的是宿主官方 \`copy()\`（不手搓 composition —— 官方 authoring 不允许）`)
     console.log(`  ${/svc\.authorable === false/.test(src) ? '✅' : '❌'} 这份部署没有可写 preset 根时优雅跳过（不是崩）`)
   }
+  /* ①·2 🔴🔴 2026-10-04：DSH 0.2.0-rc.2+ 的 preset 是**声明式**的（`@deepseek-ai/dsh-agent-preset`
+   *    行 + `dsh.bundle.patch` 数组）。「MC模式」/「MC+模式」两个 preset 由包内
+   *    `presets/*.patch.yml` 直接声明 —— 旧目录式自举（copy/agent.cordis.yml/marker）
+   *    在新宿主上是 no-op，只留给旧宿主。这里把"新宿主的那条路"钉死。 */
+  {
+    const { readFileSync, existsSync } = await import('node:fs')
+    const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
+    const patches = pkg.dsh?.bundle?.patch
+    console.log(`  ${Array.isArray(patches) && patches.includes('./presets/minecraft.patch.yml') && patches.includes('./presets/minecraft-plus.patch.yml') ? '✅' : '❌'} dsh.bundle.patch 是数组且含两个 preset 声明文件：${JSON.stringify(patches)}`)
+    console.log(`  ${pkg.engines?.dsh === '>=0.2.0-rc.2 <0.3.0' ? '✅' : '❌'} engines.dsh 声明面向 0.2.0-rc.2+（只面向新宿主）`)
+    const mcP = new URL('./presets/minecraft.patch.yml', import.meta.url)
+    const plusP = new URL('./presets/minecraft-plus.patch.yml', import.meta.url)
+    console.log(`  ${existsSync(mcP) && existsSync(plusP) ? '✅' : '❌'} 两个 preset 声明文件都在包里（files 已列 presets/）`)
+    const mcSrc = readFileSync(mcP, 'utf8')
+    const plusSrc = readFileSync(plusP, 'utf8')
+    console.log(`  ${/name: '@deepseek-ai\/dsh-agent-preset'/.test(mcSrc) && /name: '@deepseek-ai\/dsh-agent-preset'/.test(plusSrc) ? '✅' : '❌'} 都是声明式 preset 行（@deepseek-ai/dsh-agent-preset）`)
+    console.log(`  ${/\bid: minecraft\b/.test(mcSrc) && /\bid: minecraft-plus\b/.test(plusSrc) ? '✅' : '❌'} preset id = minecraft / minecraft-plus（^[a-z0-9][a-z0-9-]*$）`)
+    console.log(`  ${/name: MC模式/.test(mcSrc) && /name: MC\+模式/.test(plusSrc) ? '✅' : '❌'} 显示名 = MC模式 / MC+模式`)
+    console.log(`  ${/DSH加入Minecraft Java版服务器，像玩家一样游玩。只提供游玩MC相关工具，Agent更专注和高效。/.test(mcSrc) ? '✅' : '❌'} MC模式简介 = 用户给定原文（逐字）`)
+    console.log(`  ${/在MC模式的基础上，提供标准模式全部工具，适合不局限于游戏内的任务和定制要求。/.test(plusSrc) ? '✅' : '❌'} MC+模式简介 = 用户给定原文（逐字）`)
+    const personaOk = /你在一台真实的 Minecraft Java 版服务器里扮演一名玩家：你的"身体"是一台无头机器人，能观察世界、移动、挖掘和建造。/.test(mcSrc)
+      && /你在一台真实的 Minecraft Java 版服务器里扮演一名玩家：你的"身体"是一台无头机器人，能观察世界、移动、挖掘和建造。/.test(plusSrc)
+    console.log(`  ${personaOk ? '✅' : '❌'} 两个 preset 的 persona = 定稿原文（不复制官方那句）`)
+    const mcNeeds = ['@deepseek-ai/dsh-persona', '@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-tool-jobs', '@deepseek-ai/dsh-tool-present', '@deepseek-ai/dsh-compaction-basic']
+    console.log(`  ${mcNeeds.every((n) => mcSrc.includes(n)) ? '✅' : '❌'} MC模式组成含 persona/tool-fs/tool-jobs/present/compaction`)
+    const plusNeeds = ['@deepseek-ai/dsh-persona', '@deepseek-ai/dsh-agent-instructions', '@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-tool-bash', '@deepseek-ai/dsh-tool-fs-search', '@deepseek-ai/dsh-skill-filesystem', '@deepseek-ai/dsh-plan-mode', '@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-web', '@deepseek-ai/dsh-plugin-manager/tools']
+    console.log(`  ${plusNeeds.every((n) => plusSrc.includes(n)) ? '✅' : '❌'} MC+模式组成 = 标准模式全表（persona 除外）：${plusNeeds.filter((n) => !plusSrc.includes(n)).join(', ') || '无缺'}`)
+    console.log(`  ${!mcSrc.includes('@deepseek-ai/dsh-tool-pwsh') && !plusSrc.includes('whale_craft') ? '✅' : '❌'} 🔴 MC模式**不挂**标准工具、preset 里**不挂**插件自己（工具走全局注册 + restrict/guard）`)
+    console.log(`  ${pkg.files?.includes('presets') ? '✅' : '❌'} files 里列了 presets/（发布包才带得上声明）`)
+  }
   const { mkdtempSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
@@ -1624,7 +1654,10 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
   console.log(`  ${cfg.commandAllowed('tp') ? '✅' : '❌'} unset 回到默认值`)
   cfg.reset()
   console.log(`  ${cfg.commandAllowed('tp') && cfg.get('mcMode.hideAdminTools') === true ? '✅' : '❌'} reset 全部恢复默认`)
-  console.log(`  ${cfg.isMcModePreset('minecraft') && !cfg.isMcModePreset('standard') ? '✅' : '❌'} MC 模式判定用可配置的 preset 名单`)
+  console.log(`  ${cfg.isMcModePreset('minecraft') && cfg.isMcModePreset('minecraft-plus') && !cfg.isMcModePreset('standard') ? '✅' : '❌'} MC 模式判定用可配置的 preset 名单（含 MC+）`)
+  console.log(`  ${cfg.isMcPlusPreset('minecraft-plus') && !cfg.isMcPlusPreset('minecraft') && !cfg.isMcPlusPreset('standard') ? '✅' : '❌'} 🔴 MC+ 变体判定：minecraft-plus 是、minecraft/standard 不是`)
+  const badPlus = await Promise.resolve().then(() => cfg.set('mcPlusPresets', 'minecraft-plus')).catch((e) => e.message)
+  console.log(`  ${/必须是字符串数组/.test(String(badPlus)) ? '✅' : '❌'} mcPlusPresets 类型校验：${String(badPlus).slice(0, 40)}`)
 
   // ①b 插件状态目录：配置 / 账户**不在工作区**（用户 2026-09-16："dsh 没给插件专门记配置的目录吗"）
   {
@@ -1798,7 +1831,33 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
   const normRead = guards.every((g) => { try { return g({ name: 'read', arguments: { path: 'E:\\x\\README.md' }, agent: { id: 'sess-P', ctx: plainCtxObj } }) === undefined } catch { return true } })
   console.log(`  ${normRead ? '✅' : '❌'} 普通会话读工作区文件不受影响（隔离只管 MC 模式）`)
 
-  // ⑤ 会话建立时应用策略：MC 模式 → 工具白名单 + 投提示行；普通模式 → 什么都不做
+  // 🔴 2026-10-04 用户定：新增 **MC+ 变体**（在 MC 基础上开放标准全部工具）与
+  //    "其他模式不再暴露 mc/mckit" —— guard 按三档分：
+  //    MC（全部硬边界）/ MC+（只保留凭据）/ 其他（拒 mc_*、mc_kit_*；mc_admin_* 例外）
+  {
+    const plusCtxObj = {}; presetByCtx.set(plusCtxObj, 'minecraft-plus')
+    const plusAgent = { id: 'sess-MCP', ctx: plusCtxObj }
+    const plusAdmin = callGuard({ name: 'mc_admin_config', agent: plusAgent })
+    console.log(`  ${plusAdmin === undefined ? '✅' : '❌'} 🔴 MC+ 模式**放行** mc_admin_config（用户定：MC+ 可见管理工具）`)
+    const plusOutside = callGuard({ name: 'read', arguments: { path: 'E:\\x\\README.md' }, agent: plusAgent })
+    console.log(`  ${plusOutside === undefined ? '✅' : '❌'} 🔴 MC+ 的文件工具**不受 .whale-craft/ 限制**（全工作区）`)
+    const plusCred = callGuard({ name: 'read', arguments: { path: 'C:\\Users\\x\\.dsh\\.credentials.yaml' }, agent: plusAgent })
+    const plusSecrets = callGuard({ name: 'read', arguments: { path: 'E:\\x\\secrets\\note.md' }, agent: plusAgent })
+    console.log(`  ${plusCred && plusSecrets ? '✅' : '❌'} MC+ 仍然拒读凭据 / secrets（凭据不变式对两种 MC 模式都生效）`)
+    const plusProtected = callGuard({ name: 'write', arguments: { path: 'RULES.md', content: 'x' }, agent: plusAgent })
+    const plusPresent = callGuard({ name: 'present', arguments: { files: [{ path: 'E:\\x\\y.png' }] }, agent: plusAgent })
+    console.log(`  ${plusProtected === undefined && plusPresent === undefined ? '✅' : '❌'} MC+ 的受保护文件/present **按宿主默认**（插件不再加只读/工作区 guard）`)
+    const plusMc = callGuard({ name: 'mc_status', agent: plusAgent })
+    console.log(`  ${plusMc === undefined ? '✅' : '❌'} MC+ 的 mc / mc_kit 工具照常放行（与 MC 模式行为一致）`)
+    const plainMcDeny = callGuard({ name: 'mc_status', agent: { id: 'sess-P', ctx: plainCtxObj } })
+    const plainKitDeny = callGuard({ name: 'mc_kit_memory', arguments: { action: 'read', path: 'x.md' }, agent: { id: 'sess-P', ctx: plainCtxObj } })
+    const plainAdminOk = callGuard({ name: 'mc_admin_config', agent: { id: 'sess-P', ctx: plainCtxObj } })
+    console.log(`  ${plainMcDeny && plainKitDeny ? '✅' : '❌'} 🔴 其他模式调 mc_status / mc_kit_memory 被 guard 硬拒（"不再暴露 mc 和 mckit"的第二道锁）`)
+    console.log(`  ${plainAdminOk === undefined ? '✅' : '❌'} 其他模式**保留** mc_admin_config（它的用途就是在普通会话里管理）`)
+  }
+
+  // ⑤ 会话建立时应用策略：MC 模式 → 工具白名单；MC+ → 不套限制；其他模式 → deny 摘掉 mc/mckit；
+  //    提示词投递与这些都解耦（挂在 agent/pre-step，见上面那块）
   const restrictCalls = []
   /** 被**撤销**的 restrict（宿主契约：`restrict()` 返回 disposer；我们切出 MC 模式时必须调它） */
   const restrictReleased = []
@@ -1915,8 +1974,10 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
   })
   const mcAgent = { id: 'sess-MC2', session: mkSession('whale-mc-'), ctx: makeAgentCtx('minecraft'), inbox: mkInbox(), steer: () => { throw new Error('不该走 steer！') } }
   const plainAgent = { id: 'sess-P2', session: mkSession('whale-pl-'), ctx: makeAgentCtx('standard'), inbox: mkInbox() }
+  const plusAgent = { id: 'sess-MCP2', session: mkSession('whale-mcp-'), ctx: makeAgentCtx('minecraft-plus'), inbox: mkInbox() }
   fire('agent/created', mcAgent)
   fire('agent/created', plainAgent)
+  fire('agent/created', plusAgent)
 
   const mcRestrict = restrictCalls.find((c) => c.preset === 'minecraft')
   // 🔴 2026-09-16 真机事故的正解：把提示词当**插件提示**投递（宿主自己注入 AGENTS.md 也走 `inbox.nextStep`）
@@ -1965,6 +2026,14 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     const inboxBefore = mcAgent.inbox.nextStep.length
     fire('agent/session-start', mcAgent)
     console.log(`  ${mcAgent.inbox.nextStep.length === inboxBefore ? '✅' : '❌'} agent/session-start 不再重复入队（投递已不在这个时机）`)
+    // 🔴 2026-10-04：MC+ 会话多投一条「MC+ 模式说明」（4 条）；MC 会话仍是 3 条（preset 指纹不同、互不干扰）
+    const plusStep = await preStepMessages(plusAgent)
+    const plusMsgs = plusStep.filter((m) => m?.source?.kind === 'plugin:whale_craft')
+    const plusNoteBody = (plusMsgs[2]?.content ?? []).map((c) => c.text ?? '').join('')
+    console.log(`  ${plusMsgs.length === 4 ? '✅' : '❌'} 🔴 MC+ 会话投 4 条（3 条常规 + MC+ 模式说明；实际 ${plusMsgs.length} 条）`)
+    console.log(`  ${/（MC\+ 模式说明）/.test(plusNoteBody.split('\n')[0] ?? '') ? '✅' : '❌'} MC+ 说明的来源行带（MC+ 模式说明）：${JSON.stringify((plusNoteBody.split('\n')[0] ?? '').slice(0, 58))}…`)
+    console.log(`  ${/标准模式的全部工具/.test(plusNoteBody) && /整个工作区/.test(plusNoteBody) && /mc_kit_/.test(plusNoteBody) ? '✅' : '❌'} MC+ 说明讲清"标准全量 + 文件全工作区 + mc/mckit 不变"`)
+    console.log(`  ${msgs.length === 3 ? '✅' : '❌'} MC 会话仍是 3 条（不投 MC+ 说明）`)
   }
   // 🔴🔴 用户 2026-09-16 真机投诉："这个 agent 怎么还能用 pwsh！不是只暴露我们指定的工具吗！"
   //    旧实现：allowOtherTools 默认为空 ⇒ 只 deny 了我们的管理工具，宿主那堆工具（pwsh/subagent/…）
@@ -1984,7 +2053,16 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
   // 🔴 2026-09-16：**一个 systemPrompt 段都不注册**了（用户："系统提示词不用显式注入"）。
   //    这条断言就是防回归：以后谁再往 systemPrompt 里塞东西，这里会红。
   console.log(`  ${guidanceCtxs.length === 0 ? '✅' : '❌'} MC 模式也不注册 systemPrompt 段（实际 ${guidanceCtxs.length} 段）—— 提示词只走插件提示行`)
-  console.log(`  ${!restrictCalls.some((c) => c.preset === 'standard') ? '✅' : '❌'} 非 MC 模式的会话不被限制（不误伤普通会话）`)
+  // 🔴 2026-10-04 用户定："除了 MC模式 和 MC+模式，不再给其他模式暴露 mc 和 mckit 工具" ——
+  //    其他模式套 **deny**（摘掉 mc_* / mc_kit_*；mc_admin_* 例外，它的用途就是在普通会话里管理）。
+  {
+    const stdCalls = restrictCalls.filter((c) => c.preset === 'standard')
+    const stdDeny = stdCalls.find((c) => Array.isArray(c.f?.deny))
+    console.log(`  ${stdDeny && stdDeny.f.allow === undefined ? '✅' : '❌'} 非 MC 模式的会话套的是 **deny**（不是白名单）：宿主工具面不受影响`)
+    console.log(`  ${stdDeny && stdDeny.f.deny.includes('mc_status') && stdDeny.f.deny.includes('mc_kit_memory') ? '✅' : '❌'} deny 里含 mc_* / mc_kit_*（从可见面摘掉）`)
+    console.log(`  ${stdDeny && !stdDeny.f.deny.includes('mc_admin_config') && stdDeny.f.deny.every((n) => n.startsWith('mc_')) ? '✅' : '❌'} 🔴 deny 里**不含** mc_admin_*、也不含任何非 mc 工具（不误伤普通会话）`)
+    console.log(`  ${restrictCalls.every((c) => c.preset !== 'minecraft-plus') ? '✅' : '❌'} 🔴 MC+ 模式**不套任何 restrict**（标准工具全量 + mc/mckit 全量）`)
+  }
   // 🔴 2026-09-18 去重（新挂载点）：同一个 MC 会话**每一轮**都会走到 pre-step，
   //    但提示词只该进一次 —— 幂等靠"按 preset 记账 + 会话日志回读"。
   {
@@ -2020,8 +2098,12 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
   const lateBody = (lateMsgs[0]?.content ?? []).map((c) => c.text ?? '').join('')
   console.log(`  ${/Whale Craft 行事准则/.test(lateBody) ? '✅' : '❌'} 🔴 模式晚选上后，**首次请求组装前**照样投得到（${lateMsgs.length} 条 / ${lateBody.length} 字）—— 就是那个 bug`)
   console.log(`  ${lateMsgs.length === 3 ? '✅' : '❌'} 补投递没有重复（行事准则 + 版本提示 + 记忆索引，各一条）`)
-  const lateRestrict = restrictCalls.find((c) => c.preset === undefined)
-  console.log(`  ${Array.isArray(lateRestrict?.f?.allow) && !lateRestrict.f.allow.includes('pwsh') ? '✅' : '❌'} 模式晚选上时工具白名单也补上了（allow 有 ${lateRestrict?.f?.allow?.length ?? 0} 个、无 pwsh）`)
+  // ⚠️ 2026-10-04：晚选之前它是"非 MC"档（先 deny 摘 mc/mckit），选上后换白名单 ——
+  //    同一个 ctx 会有**两条** restrict 记录，这里挑带 allow 的那条。
+  const lateCalls = restrictCalls.filter((c) => c.preset === undefined)
+  const lateRestrict = lateCalls.find((c) => Array.isArray(c.f?.allow))
+  console.log(`  ${!!lateRestrict && !lateRestrict.f.allow.includes('pwsh') ? '✅' : '❌'} 模式晚选上时工具白名单也补上了（allow 有 ${lateRestrict?.f?.allow?.length ?? 0} 个、无 pwsh）`)
+  console.log(`  ${lateCalls.some((c) => Array.isArray(c.f?.deny)) ? '✅' : '❌'} 选模式之前它是"非 MC"档（先 deny 过 mc/mckit，选上后换白名单）`)
   console.log(`  ${eventHandlers.some((h) => h.ev === 'agent-preset/selected') ? '✅' : '❌'} 挂了宿主的 agent-preset/selected 事件（会话里切模式才生效）`)
 
   /* ⑦c 🔴🔴 2026-09-17 真机事故（用户报的"标准模式会话无法执行命令"）：**从 MC模式 切回普通模式时，
@@ -3471,7 +3553,7 @@ console.log('\n--- 客户端 bundle（client.js 静态检查）---')
     ['服务端不再因没工作区把 mcMode 压成 false（改报 hasWorkspace）', (() => {
       const isrc = readFileSync(new URL('./index.js', import.meta.url), 'utf8')
       return /hasWorkspace = Boolean\(workspaceOf\(agent\)\)/.test(isrc)
-        && /sendJson\(res, 200, \{ ok: true, sessionId, mcMode, hasWorkspace, diag \}\)/.test(isrc)
+        && /sendJson\(res, 200, \{ ok: true, sessionId, mcMode, mcPlus, hasWorkspace, diag \}\)/.test(isrc)
         && !/if \(agent && !workspaceOf\(agent\) && isMcModeAgent\(agent\)\) \{ mcMode = false/.test(isrc)
     })()],
     ['设置接口全都带上 sessionId（服务端要用它定位工作区）', /const withSid = \(p\) =>/.test(code) && /apiGet\(withSid\('\/api\/mc\/accounts'\)\)/.test(code) && /apiPatch\(withSid\('\/api\/mc\/config'\)/.test(code) && !/api(Get|Patch|Post|Delete)\('\/api\/mc\/(accounts|config|authservers)'/.test(code)],
@@ -3484,7 +3566,7 @@ console.log('\n--- 客户端 bundle（client.js 静态检查）---')
     // 🔴 2026-09-16：真机上反复"没注入"却查不出原因 → 「提示词」页直接把判据摆出来
     ['「提示词」页显示注入状态（会不会注入 + 为什么不会）', /data-wc-injectstatus/.test(code) && /injectStatus\?\.segments/.test(code) && /data-wc-note/.test(code)],
     ['服务端兜底只给标题条且带重试（不是一次性请求）', /const needServer = !known && !wantBlank/.test(code) && /\+\+tries < 20/.test(code) && /setTimeout\(tick, 3000\)/.test(code)],
-    ['名单来自 /api/mc/presets 的 mcModePresets（带默认值兜底）', /mcModePresets/.test(code) && /MC_PRESETS_FALLBACK/.test(code)],
+    ['名单来自 /api/mc/presets 的 mcModePresets（带默认值兜底；含 MC+）', /mcModePresets/.test(code) && /MC_PRESETS_FALLBACK = \['minecraft', 'minecraft-plus', 'whale_craft'\]/.test(code)],
     ['/api/mc/presets 不带闸门（门控名单不能被"没工作区"挡住）', /path === '\/api\/mc\/presets'[\s\S]{0,220}return ok\(\{ mcModePresets/.test(readFileSync(new URL('./index.js', import.meta.url), 'utf8'))],
     ['判不了就不渲染（return null）', /if \(!show\) return null/.test(code)],
     ['调用 /api/mc/accounts', src.includes('/api/mc/accounts')],
@@ -3583,7 +3665,8 @@ console.log('\n--- 依赖面 + 打包完整性（mineflayer 是**依赖**不是"
   // 🔴 2026-10-02：支持的 DSH **运行时**范围（engines.dsh 只是声明；真正强制的是 peer，
   //    宿主 dsh-app-boot 拿它和运行时版本做 semver.satisfies(..., {includePrerelease:true})）。
   //    预发布必须显式写进下限——`^0.2.0` 匹配不了 `0.2.0-rc.2`（低于下限）。
-  const DSH_RANGE = '>=0.2.0-rc.1 <0.3.0'
+  // 🔴 2026-10-04：下限抬到 rc.2 —— 插件已转向面向 0.2.0-rc.2+ 开发（声明式 preset / 注册表）。
+  const DSH_RANGE = '>=0.2.0-rc.2 <0.3.0'
 
   // mineflayer 自己声明的 vec3 范围：我们必须跟它**同一条线**，否则会装出两份 vec3 → instanceof 失效
   let mfVec3Range = null

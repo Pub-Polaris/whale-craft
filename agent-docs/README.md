@@ -22,7 +22,8 @@ DSH（DeepSeek Harness）原生插件：把一台无头 Minecraft 机器人（mi
 
 | 位置 | 角色 |
 | --- | --- |
-| `index.js`（~3.8k 行） | **host 半端入口**：`apply()` 装配一切 —— Config / McSession / Watchdog、29 个工具、HTTP API、提示词注入、MC 模式权限隔离、preset 自举、归档保护、扩展加载 |
+| `index.js`（~3.9k 行） | **host 半端入口**：`apply()` 装配一切 —— Config / McSession / Watchdog、29 个工具、HTTP API、提示词注入、MC模式/MC+模式 三档权限策略、归档保护、扩展加载 |
+| `presets/*.patch.yml` | 「MC模式」「MC+模式」两个 preset 的**声明式**定义（0.2.0-rc.2+ 注册表；经 `dsh.bundle.patch` 数组随包挂载） |
 | `client.js`（~1.8k 行） | **浏览器半端 bundle**（手写 factory，无构建步骤，HMR 热更）：状态条 / MC设置弹窗 / 新会话页 hero 入口 |
 | `src/core.mjs`（~2k 行） | `McBot`：mineflayer 封装（连接/重连/动作/观察/协议护栏）；**不依赖 DSH**，可独立测试 |
 | `src/*.mjs` | 15 个协作模块（watchdog / memory / config / **wsconfig** / **protected** / accounts / agentsmd / express / image / png / lan / ping / wait / user-message / version-prompt），全部由 index.js 组装 |

@@ -449,12 +449,12 @@ select[data-wc-in]{appearance:none;padding-right:22px;
      *    组件把它当成"不是 MC 模式"，而且**只问一次、再不重试** ⇒ 重启之后
      *    MC 模式里也永远没有按钮（非得刷新页面）。**门控不许依赖一次性网络请求。**
      *
-     * 名单（哪些 preset 算 MC 模式）取服务端 **`/api/mc/presets`**（专门给门控用的极小接口，
+     * 名单（哪些 preset 算 MC 模式，含 MC+）取服务端 **`/api/mc/presets`**（专门给门控用的极小接口，
      * 不需要 sessionId / 工作区 —— `/api/mc/config` 现在要工作区，用它会被拒而静默退回兜底名单）；
-     * 没回来之前先用插件默认值 `['minecraft','whale_craft']`（与后端默认一致）。
+     * 没回来之前先用插件默认值 `['minecraft','minecraft-plus','whale_craft']`（与后端默认一致）。
      * 服务端 `/api/mc/mode` 仍保留，供排查与测试用，前端不再依赖它。
      * ================================================================== */
-    const MC_PRESETS_FALLBACK = ['minecraft', 'whale_craft']
+    const MC_PRESETS_FALLBACK = ['minecraft', 'minecraft-plus', 'whale_craft']
     let mcPresetIds = MC_PRESETS_FALLBACK.slice()
     let mcPresetIdsAsked = false
 
@@ -1211,7 +1211,8 @@ select[data-wc-in]{appearance:none;padding-right:22px;
           //    原因可能有一堆 —— 不是 MC 模式 / 开关关了 / 文件不在 —— 与其让人猜，不如显示判据）
           injectStatus
             ? React.createElement('div', { 'data-wc-injectstatus': '' },
-              `本会话注入：MC模式 ${mark(injectStatus.mcMode)} ｜ 本提示词 ${mark(seg['agents-md'])} ｜ 工作区 AGENTS.md ${mark(seg['workspace-agents-md'])}`,
+              `本会话注入：${injectStatus.mcPlus ? 'MC+模式' : 'MC模式'} ${mark(injectStatus.mcMode)} ｜ 本提示词 ${mark(seg['agents-md'])} ｜ 工作区 AGENTS.md ${mark(seg['workspace-agents-md'])}`
+              + (injectStatus.mcPlus ? ` ｜ MC+ 说明 ${mark(seg['mc-plus-note'])}` : ''),
               injectStatus.notes?.length
                 ? React.createElement('div', { 'data-wc-note': '' }, injectStatus.notes.join(' ｜ '))
                 : null,

@@ -1,14 +1,16 @@
 # 工具目录（29 个）
 
 > 快照：0.1.7。注册全部在 `index.js` 的 `apply()` 内（`ctx.tools.register(asTool({...}))`），
-> 分三段：`mc_*`（游戏内，25）/ `mc_kit_*`（游戏外辅助，3）/ `mc_admin_*`（管理，1，MC 模式不可见+硬拒）。
+> 分三段：`mc_*`（游戏内，25）/ `mc_kit_*`（游戏外辅助，3）/ `mc_admin_*`（管理，1）。
+> 可见性按模式分档（2026-10-04）：**MC模式** 只见 mc/mckit + 文件工具；**MC+模式** 全量可见（含 admin）；
+> **其他模式** 隐藏 mc_* / mc_kit_*（仅保留 `mc_admin_*`），另有 guard 硬拒兜底。
 
 ## 通用约定
 
 - **必须经 `asTool()` 注册**：它做两件事 —— ① 对返回值做 `lossless()` 无损化（类实例只留自有可枚举属性、Vec3→`{x,y,z}`、Date→ISO、NaN/±Inf→null、`-0`→0；宿主校验要求纯 JSON，Vec3 实例曾让 5 个工具全挂）；② 把 `exec.signal` 注入 `bot.setAbortSignal`（宿主取消能中断走路/挖掘循环）。
 - **超时纪律**：调 `src/core.mjs` 的方法已自带超时/中断；扩展自己写 mineflayer 调用时**必须**套 `withTimeout` / `raceAbort`（宿主无法硬杀同进程代码）。
 - **错误形态**：工具失败直接抛错（`mcTimeout:true` / `mcAborted:true` 标记可辨）；HTTP 设置 API 相反——统一 200+`{ok:false,...}`。
-- 工具名列表由 `ourToolNames` 收集（注册时自动登记），MC 模式白名单用它 + `MC_FILE_TOOLS`。
+- 工具名列表由 `ourToolNames` 收集（注册时自动登记）：MC 模式白名单用它 + `MC_FILE_TOOLS`；其他模式的 deny 名单也用它（`mc_kit_*` + 非 admin 的 `mc_*`）。
 
 ---
 
@@ -69,7 +71,7 @@
 
 | 工具 | 职责 | 关键点 |
 | --- | --- | --- |
-| `mc_admin_config` | 全局配置读写 | `get/set/unset/reset/list` 点号键；改完**立即热生效**（消费方每次过 getter）。**MC 模式会话看不见、也调不动**（白名单隐藏 + guard 硬拒双保险），专供非 MC 模式会话（如 Master 会话）替用户改配置。只含全局键——提示词三开关已下放为**按工作区**（`<工作区>/.whale-craft/config.json`，在「MC设置→提示词」改），不在本工具里 |
+| `mc_admin_config` | 全局配置读写 | `get/set/unset/reset/list` 点号键；改完**立即热生效**（消费方每次过 getter）。**MC 模式会话看不见、也调不动**（白名单隐藏 + guard 硬拒双保险）；普通模式与 **MC+模式** 可见可用（MC+ 系用户 2026-10-04 定）。只含全局键——提示词三开关已下放为**按工作区**（`<工作区>/.whale-craft/config.json`，在「MC设置→提示词」改），不在本工具里 |
 
 ---
 
