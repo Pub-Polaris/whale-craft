@@ -107,8 +107,8 @@ dsh plugin --profile web add link:/path/to/whale-craft
 | `mcPlusPresets` | 其中哪些是 **MC+ 变体**（开放标准模式全部工具） | `["minecraft-plus"]` |
 | `mcMode.allowOtherTools` | MC 模式白名单里**额外**放行的其它工具（默认只给 `mc_*` / `mc_kit_*` / 文件工具 / `present`；MC+ 不适用——它本来就不限制） | `[]` |
 | `mcMode.hideAdminTools` | 是否把 `mc_admin_*` 也放进 MC 模式的白名单（默认隐藏，另有 guard 硬拒；MC+ 可见） | `true` |
-| `expressMode` | 文件分享：「文件分享」页选的模式：`off` 关闭 / `online` 在线 | `"off"` |
-| `expressBase` | 在线模式的 base（你访问这台 DSH 的地址，可带路径前缀） | `""` |
+| `expressEnabled` | 文件分享开关（「文件分享」页那个开关）：`true` 开 / `false` 关。老配置的 `expressMode` 会自动搬过来 | `false` |
+| `expressBase` | 文件分享的 base（你访问这台 DSH 的地址，可带路径前缀） | `""` |
 | `memoryDir` | 记忆根目录（`null` = 用会话工作区的 `.whale-craft/`） | `null` |
 | `ensureMcPreset` | **旧宿主遗留**：0.2.0-rc.2+ 的 preset 由包内 `presets/*.patch.yml` 声明提供，这个自动创建开关在新宿主上是 no-op | `true` |
 
@@ -231,22 +231,22 @@ dsh plugin --profile web add link:/path/to/whale-craft
 | 目录 | 谁能拿到 | 用途 |
 | --- | --- | --- |
 | `<工作区>/.whale-craft/.out/` | **谁都拿不到** | 默认输出（草稿、中间产物） |
-| `<工作区>/.whale-craft/.express/` | 取决于分享模式 | 发布区：要给你看的图/文件（**支持子目录**） |
+| `<工作区>/.whale-craft/.express/` | 取决于文件分享开关 | 发布区：要给你看的图/文件（**支持子目录**） |
 
-两种模式（`expressMode`）：
+文件分享是**「文件分享」页上的一个开关**（`expressEnabled`）：
 
-| 模式 | `mc_kit_express` 返回什么 | 那条访问服务 |
+| 开关 | `mc_kit_express` 返回什么 | 那条访问服务 |
 | --- | --- | --- |
-| **关闭（默认）** | 恒回一句「文件分享已关闭，请告知用户文件绝对路径，让用户自行打开」——AI 把文件的**绝对路径**给你，你自己打开 | **不开**（访问即 404） |
-| **在线** | `base` + `/api/whale-craft/express/<工作区 uuid>/<相对路径>` 的**完整 URL**（图片能直接在对话里内联显示） | **只在**这个模式开 |
+| **关（默认）** | 恒回一句「文件分享已关闭，请告知用户文件绝对路径，让用户自行打开」——AI 把文件的**绝对路径**给你，你自己打开 | **不开**（访问即 404） |
+| **开** | `base` + `/api/whale-craft/express/<工作区 uuid>/<相对路径>` 的**完整 URL**（图片能直接在对话里内联显示） | **只在开启时**开 |
 
-**在线模式**要填 `base` = 你访问这台 DSH 用的地址（如 `https://dsh.example.com`，可带路径前缀）；
-设置页有「获取当前」，也可以直接切到在线 —— base 为空时会**自动**用当前访问地址填上。
+**开启分享后**要填 `base` = 你访问这台 DSH 用的地址（如 `https://dsh.example.com`，可带路径前缀）；
+设置页有「获取当前」，也可以直接打开开关 —— base 为空时会**自动**用当前访问地址填上。
 （精度：浏览器把**自己正在用的** `location.origin` 报给服务端 → 否则看 `Origin` 头 → 同源 `Referer`
 → `X-Forwarded-Proto` + `Host` → `Host`。注意 `location.origin` **不含路径**，所以反代额外加的
 路径前缀得你自己补 —— DSH 本身没有"挂载前缀"概念。）
 
-**两种模式都只认发布区**：文件得先放进 `.express/` 或其子目录（出图时把 `out` 写成那里，
+**开与不开都只认发布区**：文件得先放进 `.express/` 或其子目录（出图时把 `out` 写成那里，
 或用 `mc_kit_memory {action:"put"}` 复制过去），再让 AI 调 `mc_kit_express` 取那一行。
 
 - 服务端地址：`GET|HEAD /api/whale-craft/express/<工作区 uuid>/<剩余路径>`（自己的顶层前缀路由，
@@ -333,10 +333,10 @@ CI 跑的就是这两条（`.github/workflows/ci.yml`）：**ubuntu（Node 22 / 
 ## 已知限制
 
 - **微软正版登录未实现**（只有离线 / Yggdrasil 皮肤站）。
-- **文件分享默认是关的**（`expressMode: "off"`）：AI 画了图只会把**绝对路径**给你，要让它直接在对话里显示，
-  得在「MC设置 → 文件分享」里切到**在线**并填好 `base`。前端只认绝对 http(s) 图片地址，所以关闭模式下的
+- **文件分享默认是关的**（`expressEnabled: false`）：AI 画了图只会把**绝对路径**给你，要让它直接在对话里显示，
+  得在「MC设置 → 文件分享」里**打开开关**并填好 `base`。前端只认绝对 http(s) 图片地址，所以关闭时的
   本地路径**不会**内联成图（这是设计如此，不是 bug）。
-- 在线模式的 `base` **不做连通性自检**：填错了只有你自己能发现（AI 拿到的 URL 打不开）。
+- 文件分享的 `base` **不做连通性自检**：填错了只有你自己能发现（AI 拿到的 URL 打不开）。
 - 🔴 **行事准则为什么叫 `RULES.md`**（见上）：`AGENTS.md` 会被 DSH 当工作区指令自动注入到任何碰过该目录的会话，
   与 MC 模式无关 —— 所以这个名字是刻意的。
 - 把 `memoryDir` 指到共享目录时，多个工作区会**共用**同一份记忆与 `config.json`（按工作区的设置也随之共享）。

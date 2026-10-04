@@ -22,7 +22,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
-import { EXPRESS_MODES, normalizeExpressBase, resolveExpressMode } from './express.mjs'
+import { normalizeExpressBase } from './express.mjs'
 
 /** 插件在 `$DSH_HOME` 下的目录名 */
 export const STATE_DIR_NAME = 'whale_craft'
@@ -117,19 +117,19 @@ export const DEFAULT_CONFIG = {
    */
   ensureMcPreset: true,
   /**
-   * 「文件分享」模式（用户 2026-09-17 定）：`off` 关闭（默认） / `online` 在线。
+   * 「文件分享」开关（2026-10-04 定）：`true` 开启 / `false` 关闭（默认）。
    *
-   *   · `off`    关闭：`mc_kit_express` 只回一句话（"文件分享已关闭，请告知用户文件绝对路径…"），
-   *              让 AI 把**绝对路径**告诉用户，用户自己打开；`/api/mc/whale-craft/…` 服务**不开**；
-   *   · `online` 在线：回 `expressBase + 相对路径` 的**完整 URL**；**只有这个模式**才开那条服务。
+   *   · 关：`mc_kit_express` 只回一句话（"文件分享已关闭，请告知用户文件绝对路径…"），
+   *     让 AI 把**绝对路径**告诉用户，用户自己打开；发布区服务**不开**；
+   *   · 开：回 `expressBase + 相对路径` 的**完整 URL**，并开那条发布区服务。
    *
-   * 🔴 用户 2026-09-17 砍掉了原先的"Windows 本地"模式（"Windows 很鸡肋"）：它只是把绝对路径
-   *    原样回给 AI，而 DSH 前端不认相对/本地路径 —— 点不开也内联不了，不如只留"关"和"在线"两种。
-   * ⚠️ 老配置里可能还留着 `local`：{@link resolveExpressMode} 一律当 `off`（不会再开服务）。
-   * 两种模式都仍然**只认发布区**（`.whale-craft/.express/`）。
+   * 🔴 原先是 `expressMode: 'off' | 'online'`（还一度有 `local`）。2026-10-04 用户："以后只有
+   *    在线这一种方式" ⇒ 模式降级成一个开关。老配置的迁移见 {@link PluginConfig.migrate}：
+   *    `'online'` → `true`，其余（`'off'`/`'local'`/乱写）→ `false`，并删掉旧键。
+   * ⚠️ 两种状态都仍然**只认发布区**（`.whale-craft/.express/`）。
    */
-  expressMode: 'off',
-  /** 在线模式的 base（如 `https://dsh.example.com`，可带路径前缀）；空 = 还没配 */
+  expressEnabled: false,
+  /** 文件分享的 base（如 `https://dsh.example.com`，可带路径前缀）；空 = 还没配 */
   expressBase: '',
 
 }
@@ -450,11 +450,29 @@ export class PluginConfig {
       const raw = readFileSync(this.file, 'utf8')
       const parsed = JSON.parse(raw)
       this.data = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+      this.migrate()
     } catch (e) {
       // 配置坏了不能让插件起不来：记下错误，用默认值继续
       this.data = {}
       this.lastError = `配置读取失败（已按默认值运行）：${e.message}`
     }
+  }
+
+  /**
+   * 配置迁移（幂等；加载时跑一次，只为把**旧格式**搬到新格式）。
+   *
+   * 目前一档：老的 `expressMode`（`'off' | 'online'`，还一度有 `'local'`）→ `expressEnabled` 布尔
+   * （用户 2026-10-04："文件分享以后只有在线这一种方式"）：`'online'` → `true`，其余 → `false`；
+   * 随即**删掉旧键**（免得两套语义并存）。已经写过新键就不动新键、只清旧键。
+   * 只在真改动了才落盘；落盘失败只记一条 `lastError`（**不让插件起不来**）。
+   */
+  migrate () {
+    if (!this.data || typeof this.data !== 'object') return
+    if (!Object.prototype.hasOwnProperty.call(this.data, 'expressMode')) return
+    const online = String(this.data.expressMode ?? '').trim().toLowerCase() === 'online'
+    if (!Object.prototype.hasOwnProperty.call(this.data, 'expressEnabled')) this.data.expressEnabled = online
+    delete this.data.expressMode
+    try { this.save() } catch (e) { this.lastError = `配置迁移写盘失败（已按迁移后的值运行）：${e.message}` }
   }
 
   save () {
@@ -486,8 +504,7 @@ export class PluginConfig {
     }
     if (SECRET_KEYS.has(top)) throw new Error('这一项不允许通过工具修改')
     validate(top, rest, value)
-    // 落盘前归一化（存的永远是规范形态：模式小写、base 去尾斜杠）
-    if (top === 'expressMode') value = String(value).trim().toLowerCase()
+    // 落盘前归一化（存的永远是规范形态：base 去尾斜杠）
     if (top === 'expressBase') value = normalizeExpressBase(value) ?? ''
     writePath(this.data, p.split('.'), value)
     this.save()
@@ -550,12 +567,12 @@ export class PluginConfig {
     return typeof v === 'string' && v.trim() ? v.trim() : null
   }
 
-  /** 「文件分享」模式：只有 `online` 是开，其余（含老配置里的 `local`）一律 `off` */
-  get expressMode () {
-    return resolveExpressMode(this.get('expressMode'))
+  /** 「文件分享」开关（默认关） */
+  get expressEnabled () {
+    return this.get('expressEnabled') === true
   }
 
-  /** 在线模式的 base（归一化：去尾斜杠；非法/空 = `''`） */
+  /** 文件分享的 base（归一化：去尾斜杠；非法/空 = `''`） */
   get expressBase () {
     return normalizeExpressBase(this.get('expressBase')) ?? ''
   }
@@ -622,15 +639,8 @@ function validate (top, rest, value) {
     if (value !== null && typeof value !== 'string') throw new Error('memoryDir 必须是字符串（绝对路径）或 null')
     return
   }
-  if (top === 'allowAllCommands' || top === 'ensureMcPreset') {
+  if (top === 'allowAllCommands' || top === 'ensureMcPreset' || top === 'expressEnabled') {
     if (typeof value !== 'boolean') throw new Error(`${top} 必须是 true/false`)
-    return
-  }
-  if (top === 'expressMode') {
-    const v = String(value ?? '').trim().toLowerCase()
-    if (!EXPRESS_MODES.includes(v)) {
-      throw new Error(`expressMode 必须是 ${EXPRESS_MODES.join(' / ')} 之一`)
-    }
     return
   }
   if (top === 'expressBase') {

@@ -115,35 +115,22 @@ export function mimeOf (file) {
  */
 export const SANDBOX_TYPES = /^(?:image\/svg\+xml|text\/html|text\/xml|application\/xml|text\/javascript|application\/javascript)/
 
-/* ── 「文件分享」模式（用户 2026-09-17 定）────────────────────────────────────
- * 两种模式决定 `mc_kit_express` **回什么**，以及 `/api/mc/whale-craft/…` 这条路由**开不开**：
- *   · off    关闭：只回一句话（{@link EXPRESS_OFF_TEXT}），让 AI 把**绝对路径**告诉用户，用户自己打开；服务不开；
- *   · online 在线：回 `base + 相对路径` 的**完整 URL**；这条路由**只在**这个模式下开。
- * 默认 **off**（关闭）。
- * 🔴 用户 2026-09-17 砍掉了原先的"Windows 本地"模式："这样看来 Windows 很鸡肋啊" ——
- *    它只是把绝对路径原样回给 AI（用户本机能打开），但 DSH 前端不认相对/本地路径、
- *    照样点不开也内联不了；真要在对话里看到图就得用在线模式。少一个模式少一份解释成本。
- * 🔴 两种模式都**只认发布区**里的文件 —— "目录即白名单"不变。
+/* ── 「文件分享」（用户 2026-09-17 定；2026-10-04 从"模式"改成**开关**）──────────
+ * `expressEnabled` 决定 `mc_kit_express` **回什么**，以及 `/api/mc/whale-craft/…` 这条路由**开不开**：
+ *   · 关：只回一句话（{@link EXPRESS_OFF_TEXT}），让 AI 把**绝对路径**告诉用户，用户自己打开；服务不开；
+ *   · 开：回 `base + 相对路径` 的**完整 URL**；这条路由**只在**开启时开。
+ * 默认 **关**。
+ * 🔴 原先是 `off | online` 两模式（还一度有 `local`）。2026-10-04 用户："以后只有在线这一种方式"
+ *    ⇒ 模式降级成一个开关；老值 `'online'` → `true`、其余 → `false`（迁移见 src/config.mjs `PluginConfig.migrate`）。
+ * 🔴 两种状态都**只认发布区**里的文件 —— "目录即白名单"不变。
  * ────────────────────────────────────────────────────────────────────────── */
 
-/** 模式取值（顺序 = 设置页展示顺序，第一个是默认） */
-export const EXPRESS_MODES = ['off', 'online']
-
-/** 关闭模式**恒回**的这句话（用户定稿，逐字照抄） */
+/** 关闭时**恒回**的这句话（用户定稿，逐字照抄） */
 export const EXPRESS_OFF_TEXT = '文件分享已关闭，请告知用户文件绝对路径，让用户自行打开'
 
-/** 在线模式但没配 base 时回的话（**不抛错**：让 AI 直接转达用户去设置） */
+/** 开启但没配 base 时回的话（**不抛错**：让 AI 直接转达用户去设置） */
 export const EXPRESS_NEED_BASE_TEXT
-  = '在线分享模式还没有设置 base：请让用户在「MC设置 → 文件分享」里填写 base，或先改用其它模式。'
-
-/**
- * 生效模式：只有 `online` 是"开"，其余（没设过 / 老配置里的 `local` / 乱写）一律 `off`。
- * 防御性归一化：老配置文件里可能还留着已经砍掉的 `local`，这里当作关闭。
- */
-export function resolveExpressMode (stored) {
-  const s = String(stored ?? '').trim().toLowerCase()
-  return s === 'online' ? 'online' : 'off'
-}
+  = '文件分享还没有设置 base：请让用户在「MC设置 → 文件分享」里填写 base。'
 
 /**
  * 归一化 base。空 = 未设置（返回 `''`）；非法（不是 http/https 完整地址）返回 `null`。

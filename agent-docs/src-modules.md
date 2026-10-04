@@ -116,10 +116,11 @@
 | `allowAllCommands` | `false` | 指令白名单总开关 |
 | （提示词三开关 `injectWhaleCraftAgentsMd` / `injectWorkspaceAgentsMd` / `rulesFollowVersion` **已下放为按工作区**，存 `<工作区>/.whale-craft/config.json`，见 [§14 wsconfig](#14-srcwsconfigmjs--按工作区的配置)） | | |
 | `ensureMcPreset` | `true` | 旧宿主遗留：目录式自举「MC模式」（0.2.0-rc.2+ 由 `presets/*.patch.yml` 声明提供，此键 no-op） |
-| `expressMode` | `'off'` | 文件分享：`off`/`online`（老值 `local` 一律当 off） |
-| `expressBase` | `''` | online 模式的访问 base |
+| `expressEnabled` | `false` | 文件分享开关（2026-10-04 起是布尔；老 `expressMode` 由 `migrate` 搬） |
+| `expressBase` | `''` | 文件分享的访问 base |
 
-- `PluginConfig`：`load`（坏配置不崩、记 `lastError` 按默认跑）、`set` 只认 `TOP_KEYS`（= DEFAULT_CONFIG 键）且过 `validate`、`values()` 深合并（数组整体覆盖）；语义 getter（`mcModePresets/mcPlusPresets/memoryDir/expressMode/expressBase/commandAllowed/isMcModePreset/isMcPlusPreset`…）每次现读 ⇒ **改完热生效**。
+- `PluginConfig`：`load`（坏配置不崩、记 `lastError` 按默认跑；**顺带跑 `migrate()`**）、`set` 只认 `TOP_KEYS`（= DEFAULT_CONFIG 键）且过 `validate`、`values()` 深合并（数组整体覆盖）；语义 getter（`mcModePresets/mcPlusPresets/memoryDir/expressEnabled/expressBase/commandAllowed/isMcModePreset/isMcPlusPreset`…）每次现读 ⇒ **改完热生效**。
+- `migrate()`：目前一档 —— 老 `expressMode: 'off'|'online'`（曾含 `'local'`）→ `expressEnabled`（`online`→`true`，其余→`false`），**删旧键**、只在真改动时落盘。
 - `legacyPromptSwitches()`：从**文件原值**里取旧版全局存过的三个提示词开关（只取显式设过且类型合法的）—— 只作工作区建档时的一次性 seed 来源（消费方 index.js → `wsconfig.migrate`）。
 - `resolveStateDir`：`WHALE_CRAFT_STATE_DIR` → `WHALE_CRAFT_DIR`+whaleDir → `$DSH_HOME/whale_craft` → `~/.dsh/whale_craft`。
 

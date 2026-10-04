@@ -47,6 +47,29 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react')
 
+    // 🔴 图标约定（2026-10-04 用户定）：**一律取自 DSH 官方的图标集**，不要自己画、
+    //    也不要另引第三方图标库。DSH 把它的图标集（`IconSettingsOutlineRegular` 等）
+    //    随 `@deepseek-ai/dsh-client-ui-primitives` 作为**平台内置模块**暴露给所有客户端插件
+    //    （shell 的静态模块表里就有它，官方插件也是直接 require 的）——所以这里 require 即得
+    //    "同源同款"，与原生「卸载」按钮的 `IconTrashOutlineRegular` 是同一套。
+    //    命名：`…OutlineRegular` = 1px 描边（本文按钮用这个），`…OutlineMedium` = 1.3px。
+    //    兜底：宿主万一没提供（理论上不该发生），退回"无图标"而不是让整个客户端半端挂掉。
+    let IconSettingsOutlineRegular = null
+    let IconFolderOpenRegular = null
+    let IconCloseOutlineRegular = null
+    let createRoot = null
+    try {
+      const primitives = require('@deepseek-ai/dsh-client-ui-primitives')
+      IconSettingsOutlineRegular = primitives.IconSettingsOutlineRegular
+      // 工作区标记：native `WorkspaceChip` 同款文件夹图标（有 label 时就用它、size 16）。
+      IconFolderOpenRegular = primitives.IconFolderOpenRegular
+      // 弹窗右上角关闭按钮的叉图标（与 DSH 原生弹窗同款）。
+      IconCloseOutlineRegular = primitives.IconCloseOutlineRegular
+      // hero 那个「设置」按钮是**纯 DOM**（不是 React 渲染的），拿不到 React 组件本身；
+      // 借 react-dom 的一个小根把图标渲染进按钮，图标仍出自同一套官方图标集（不另画、不搬路径）。
+      createRoot = require('react-dom/client').createRoot
+    } catch (e) { /* 见上：只用图标，拿不到就退回文字，别让按钮变空白 */ }
+
     const CSS = `
 [data-mc-status]{display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 6px 0 10px;
   border-radius:999px;background:var(--dsw-alias-bg-overlay);
@@ -81,6 +104,9 @@ window.__ModuleLoader__.load({
 [data-wc-btn][data-wc-danger]:hover{background:var(--dsw-alias-state-error-primary);
   color:var(--dsw-alias-label-primary-foreground,#fff);}
 [data-wc-btn][data-wc-tiny]{height:24px;padding:0 9px;font-size:11px;}
+/* 只有图标的按钮：收成正方形（边长 = 高度） */
+[data-wc-btn][data-wc-icon]{padding:0;width:28px;}
+[data-wc-btn][data-wc-tiny][data-wc-icon]{width:24px;}
 /* 新会话页那个按钮是插进 hero 行、贴在模式芯片右边的（那一行 gap:2px，这里再给点间距） */
 [data-whale-craft-mc-settings]{margin-left:6px;}
 [data-slot="conversation.session.header.actions"] [data-wc-btn]:first-child{margin-left:8px;}
@@ -96,9 +122,32 @@ window.__ModuleLoader__.load({
 [data-wc-head]{display:flex;align-items:center;gap:12px;height:52px;flex:none;padding:0 16px 0 20px;
   border-bottom:1px solid var(--dsw-alias-border-l2,transparent);}
 [data-wc-titlewrap]{display:flex;flex-direction:column;gap:3px;min-width:0;}
+/* 标题那一行：标题 + （有工作区时）文件夹图标 + 灰色工作区名，小间隔 */
+[data-wc-titleline]{display:flex;align-items:center;gap:8px;min-width:0;}
 [data-wc-title]{font-size:14px;font-weight:600;line-height:1;}
+/* 头部的工作区名（灰、次要色） */
+[data-wc-wsname]{display:inline-flex;align-items:center;gap:4px;min-width:0;font-size:12px;
+  font-weight:400;color:var(--dsw-alias-label-tertiary);}
+[data-wc-wsname] > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 [data-wc-subhead]{font-size:11px;line-height:14px;color:var(--dsw-alias-label-tertiary);}
 [data-wc-grow]{flex:1;min-width:0;}
+
+/* —— 「属于本工作区」标记 + 无工作区提示 —— */
+[data-wc-wsmark]{display:inline-flex;align-items:center;vertical-align:middle;margin-left:5px;
+  color:var(--dsw-alias-label-tertiary);cursor:default;}
+[data-wc-wsneed]{display:flex;justify-content:center;align-items:center;gap:6px;margin-top:16px;
+  color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;}
+[data-wc-dimmed]{opacity:.6;}
+/* 弹窗右上角关闭：**叉图标**，与标题同色；hover 红；无边框、无底色（2026-10-04 定，其余弹窗照此） */
+[data-wc-xbtn]{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;
+  padding:0;border:0;background:transparent;border-radius:6px;cursor:pointer;font-family:inherit;
+  color:var(--dsw-alias-label-primary);}
+[data-wc-xbtn]:hover{color:var(--dsw-alias-state-error-primary);}
+[data-wc-xbtn]:disabled{opacity:.5;cursor:default;}
+/* 注入开关 label 里的文件名：文件不存在 → 斜体灰删除线（hover 提示见 title） */
+[data-wc-filename]{font-weight:400;}
+[data-wc-filename][data-wc-missing]{font-style:italic;color:var(--dsw-alias-label-tertiary);
+  text-decoration:line-through;cursor:default;}
 
 /* —— 两栏：左标签页 + 右内容区（一次只渲染一页）—— */
 [data-wc-panes]{display:flex;flex:1;min-height:0;}
@@ -142,15 +191,6 @@ window.__ModuleLoader__.load({
 /* 「提示词」页顶部的注入状态（2026-09-16）：一眼看出会不会注入、为什么不会 */
 [data-wc-injectstatus]{font-size:12px;line-height:18px;color:var(--dsh-text-2,#9aa0a6);margin:0 0 8px;}
 [data-wc-injectstatus] [data-wc-note]{font-size:11px;line-height:16px;color:var(--dsh-text-3,#7a8085);margin-top:2px;}
-[data-wc-modes]{display:flex;gap:8px;margin:0 0 8px;}
-[data-wc-mode]{flex:1;display:inline-flex;align-items:center;justify-content:center;height:34px;padding:0 14px;
-  border:1px solid var(--dsw-alias-border-secondary,rgba(128,128,128,.3));border-radius:8px;background:transparent;
-  color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;font-family:inherit;line-height:1;cursor:pointer;
-  transition:background .12s,border-color .12s;}
-[data-wc-mode]:hover:not(:disabled){border-color:var(--dsw-alias-state-business-primary,#4a8cff);}
-[data-wc-mode][data-wc-mode-on]{border-color:transparent;font-weight:600;
-  background:var(--dsw-alias-state-business-primary,rgba(74,140,255,.22));}
-[data-wc-mode]:disabled{opacity:.5;cursor:default;}
 [data-wc-hint] strong{font-weight:600;color:var(--dsw-alias-label-primary,#e6e6e6);}
 [data-wc-verprompt]{margin:0 0 10px;font-size:12px;color:var(--dsh-text-2,#9aa0a6);}
 [data-wc-verprompt] summary{cursor:pointer;}
@@ -623,11 +663,54 @@ select[data-wc-in]{appearance:none;padding-right:22px;
         React.createElement('button', {
           type: 'button',
           'data-wc-btn': '',
+          'data-wc-icon': '',
           'data-wc-mc-settings': '',
           title: 'MC设置：账户、提示词与指令白名单',
+          'aria-label': 'MC设置',
           onClick: openSettings,
-        }, 'MC设置'),
+        }, IconSettingsOutlineRegular ? React.createElement(IconSettingsOutlineRegular, { size: 16 }) : 'MC设置'),
         React.createElement(McSettingsModal, { ...props, wsCwd }),
+      )
+    }
+
+    /* ==================================================================
+     * 「MC设置」入口③：**插件页 → whale_craft 详情页**头部的按钮（2026-10-04，演示）
+     * ----------------------------------------------------------------
+     * 插件管理页的 `plugins.detail.actions` 插槽是 **root 作用域**（无会话、无工作区），
+     * 所以这里**只渲染一个按钮**、不挂模态框（现有模态框依赖 sessionId / 工作区）。
+     * 自过滤：只认 whale_craft 自己的 bundle 页（`subject.kind==='bundle'` 且包名匹配）；
+     * 别的 bundle / row / item 一律返回 null（官方约定：对无关 subject 返回 null）。
+     * ⚠️ 当前点击是**空操作** —— 只演示入口位置，后端解耦与面板接入待后续。
+     * ================================================================== */
+    const DETAIL_BUNDLE_NAME = 'whale_craft'
+    /**
+     * 「设置」入口③：**插件页 → whale_craft 详情页**头部的按钮（2026-10-04）。
+     * 这个插槽是 **root 作用域**（无会话、无工作区），所以它打开的模态框天然走"无工作区"模式：
+     * 全局项（账户 / 白名单 / 分享模式）照常，工作区项隐藏或只读。
+     * 自过滤：只认 whale_craft 自己的 bundle 页（`subject.kind==='bundle'` 且包名匹配）；
+     * 别的 bundle / row / item 一律返回 null（官方约定：对无关 subject 返回 null）。
+     * ⚠️ `useState` 必须在早返回**之前**调用（hooks 规则）。
+     */
+    function McSettingsDetailEntry(props) {
+      const subject = props?.subject
+      const [open, setOpen] = React.useState(false)
+      if (subject?.kind !== 'bundle' || subject?.pkg?.name !== DETAIL_BUNDLE_NAME) return null
+      return React.createElement(
+        React.Fragment,
+        null,
+        React.createElement('button', {
+          type: 'button',
+          'data-wc-btn': '',
+          'data-wc-mc-settings-detail': '',
+          title: '设置：账户、提示词与指令白名单',
+          onClick: () => setOpen(true),
+        },
+          // 图标与原生「卸载」按钮同款（同为 DSH 图标集的 13px Regular；见文件头图标约定）
+          IconSettingsOutlineRegular ? React.createElement(IconSettingsOutlineRegular, { size: 13 }) : null,
+          '设置',
+        ),
+        // 受控打开：这个入口无 sessionId / 工作区（root 作用域）→ 模态框走"无工作区"模式
+        React.createElement(McSettingsModal, { open, onClose: () => setOpen(false) }),
       )
     }
 
@@ -656,17 +739,37 @@ select[data-wc-in]{appearance:none;padding-right:22px;
     /**
      * 把「MC设置」按钮插到 hero 行里模式芯片的右边。
      * @param onClick 点击回调（只 emit 一个空标记，DOM 里不放任何账户/凭据信息）
-     * @returns 撤销函数：断开观察者并摘掉按钮
+     * @param getDisabled 读"当前是否该禁用"（**明确没有工作区**时禁用；拿不准就返回 false 放行）
+     * @returns `{ dispose, refresh }`：dispose 断开观察者并摘掉按钮；refresh 重算禁用态（不重建 DOM）
      */
-    function mountHeroChipButton(onClick) {
+    function mountHeroChipButton(onClick, getDisabled) {
       const btn = document.createElement('button')
       btn.type = 'button'
       btn.setAttribute(HERO_BTN_ATTR, '')
       btn.setAttribute('data-wc-btn', '')
+      btn.setAttribute('data-wc-icon', '')
       btn.setAttribute('data-wc-tiny', '')
       btn.title = 'MC设置：账户、提示词与指令白名单'
-      btn.textContent = 'MC设置'
+      btn.setAttribute('aria-label', 'MC设置')
+      // 只放图标（与标题条入口、详情页按钮同款，同出自 DSH 官方图标集）。这个按钮是
+      // **纯 DOM**、拿不到 React 组件，所以借 react-dom 的一个小根把图标渲染进来；
+      // 渲染不到（理论上不该发生）就退回文字，别让按钮变空白。
+      let iconRoot = null
+      if (IconSettingsOutlineRegular && createRoot) {
+        iconRoot = createRoot(btn)
+        iconRoot.render(React.createElement(IconSettingsOutlineRegular, { size: 16 }))
+      } else {
+        btn.textContent = 'MC设置'
+      }
       btn.addEventListener('click', onClick)
+      // 禁用态：新会话页"只要是 MC/MC+ 就显示"，但**没选工作区时点不动**。
+      // 三态由调用方判（`=== false` 才禁用；null = 还不知道，放行）。
+      const refresh = () => {
+        const off = typeof getDisabled === 'function' && getDisabled() === true
+        btn.disabled = off
+        btn.title = off ? '请先选择工作区' : 'MC设置：账户、提示词与指令白名单'
+      }
+      refresh()
 
       /**
        * 幂等放置：已经在锚点后面就什么都不做（否则会自己触发自己）。
@@ -714,7 +817,7 @@ select[data-wc-in]{appearance:none;padding-right:22px;
       const observer = new MutationObserver(() => {
         if (queued) return
         queued = true
-        Promise.resolve().then(() => { queued = false; place(); track() })
+        Promise.resolve().then(() => { queued = false; place(); track(); refresh() })
       })
       track()
       // 首帧锚点可能比本组件晚挂上（React 提交顺序不保证）→ 多补几次；有上限，别常驻空转。
@@ -723,17 +826,20 @@ select[data-wc-in]{appearance:none;padding-right:22px;
       const tick = () => {
         place()
         track()
+        refresh()
         if (document.querySelector(HERO_CHIP_ANCHOR) !== null) return   // 已就位，收工
         if (++tries >= 10) return
         retry = setTimeout(tick, 300)
       }
       retry = setTimeout(tick, 120)
 
-      return () => {
+      const dispose = () => {
         if (retry) clearTimeout(retry)
         observer.disconnect()
+        if (iconRoot) iconRoot.unmount()
         btn.remove()
       }
+      return { dispose, refresh }
     }
 
     /**
@@ -748,20 +854,27 @@ select[data-wc-in]{appearance:none;padding-right:22px;
     function McSettingsDockEntry(props) {
       const show = useMcSettingsGate(props, true)
       const wsCwd = useWorkspaceCwd(props)
-      // 🔴 2026-09-18：入口不再因"没工作区"隐藏，改为**点了才检查**（详见 useMcWorkspaceReady）。
+      // 🔴 2026-09-18：入口不再因"没工作区"**隐藏**；2026-10-04 改口径：
+      //    **只要是 MC/MC+ 就显示**，没选工作区时**禁用**（见下 getDisabled）。
       const wsReady = useMcWorkspaceReady(props, show)
-      // 点击回调只建一次（DOM 监听不改），所以用 ref 带出"最新"的工作区判定。
+      // 点击回调 / 禁用判定只建一次（DOM 监听不改），所以用 ref 带出"最新"的工作区判定。
       const wsReadyRef = React.useRef(wsReady)
       wsReadyRef.current = wsReady
+      const ctlRef = React.useRef(null)
 
       React.useEffect(() => {
         if (!show) return undefined
-        // 门控只管"是不是 MC 模式"；工作区在**点击那一刻**判：明确没有（false）才拦。
-        return mountHeroChipButton(() => {
+        const ctl = mountHeroChipButton(() => {
+          // 兜底：拿不准（null）时按钮没禁用，点到这儿再拦一次。
           if (wsReadyRef.current === false) { window.alert(NO_WORKSPACE_TIP); return }
           openSettings()
-        })
+        }, () => wsReadyRef.current === false)
+        ctlRef.current = ctl
+        return () => { ctlRef.current = null; ctl.dispose() }
       }, [show])
+
+      // 工作区就绪状态一变就刷新禁用态（不重建 DOM、不重挂按钮）
+      React.useEffect(() => { if (ctlRef.current) ctlRef.current.refresh() }, [wsReady, show])
 
       if (!show) return null
       return React.createElement(McSettingsModal, { ...props, wsCwd })
@@ -788,8 +901,36 @@ select[data-wc-in]{appearance:none;padding-right:22px;
     const h = React.createElement
 
     /**
+     * 「这一项属于本工作区」标记：灰色文件夹图标 + hover 提示。
+     * 只挂在**工作区相关**的设置项/标题旁（有工作区时才挂）。
+     */
+    function WsMark() {
+      return h('span', { 'data-wc-wsmark': '', title: '该设置项应用于本工作区' },
+        IconFolderOpenRegular ? h(IconFolderOpenRegular, { size: 12 }) : null)
+    }
+
+    /** 无工作区时，子页面底部那行居中灰字（带文件夹图标）：告诉用户去哪儿编辑这些设置。 */
+    function WsNeedHint() {
+      return h('div', { 'data-wc-wsneed': '' },
+        IconFolderOpenRegular ? h(IconFolderOpenRegular, { size: 13 }) : null,
+        h('span', null, '在对话中打开设置，以编辑工作区详细设置'))
+    }
+
+    /**
+     * 文件名（用在注入开关的 label 里）。文件不存在时：斜体 + 灰 + 删除线，hover 提示原因。
+     * 只是**提示**，不影响开关可用性（开关始终用于改配置）。
+     */
+    function FileName(props) {
+      const missing = props.missing === true
+      return h('span', missing
+        ? { 'data-wc-filename': '', 'data-wc-missing': '', title: '目前没有这个文件' }
+        : { 'data-wc-filename': '' }, props.name)
+    }
+
+    /**
      * 开关。受控：`on` = 当前值，`onToggle(next)` 由调用方决定发不发请求。
      * `disabled` 时按钮真的禁用（例如工作区没有 AGENTS.md 时）。
+     * `mark` 为真时在 label 后挂「属于本工作区」标记（见 WsMark）。
      */
     function Switch(props) {
       return React.createElement(
@@ -798,7 +939,7 @@ select[data-wc-in]{appearance:none;padding-right:22px;
         React.createElement(
           'div',
           { 'data-wc-switchmain': '' },
-          React.createElement('span', { 'data-wc-switchlabel': '' }, props.label),
+          React.createElement('span', { 'data-wc-switchlabel': '' }, props.label, props.mark ? h(WsMark) : null),
           props.desc ? React.createElement('span', { 'data-wc-switchdesc': '' }, props.desc) : null,
         ),
         React.createElement('button', {
@@ -808,7 +949,8 @@ select[data-wc-in]{appearance:none;padding-right:22px;
           role: 'switch',
           'aria-checked': props.on ? 'true' : 'false',
           disabled: props.disabled === true,
-          title: props.title || props.label,
+          // label 可能是节点（带文件名），那种情况不能拿去当 title（否则渲染成 [object Object]）
+          title: props.title || (typeof props.label === 'string' ? props.label : undefined),
           onClick: () => { if (!props.disabled) props.onToggle(!props.on) },
         }, React.createElement('span', { 'data-wc-knob': '' })),
       )
@@ -1190,9 +1332,9 @@ select[data-wc-in]{appearance:none;padding-right:22px;
 
     function PromptPane(props) {
       const {
-        mdText, wsExists, injectStatus,
+        mdText, wsExists, rulesExists, injectStatus,
         injectWc, injectWs, busyKey, onMdText, onSave, onReset, onInjectWc, onInjectWs,
-        followVersion, rulesVersion, pluginVersion, onFollowVersion,
+        followVersion, rulesVersion, pluginVersion, versionPrompt, onFollowVersion, hasWorkspace,
       } = props
       const busy = busyKey !== null
       const [confirmReset, setConfirmReset] = React.useState(false)
@@ -1206,82 +1348,94 @@ select[data-wc-in]{appearance:none;padding-right:22px;
         'div',
         { 'data-wc-pane-page': 'prompt' },
         React.createElement('div', { 'data-wc-sec': '' },
-          React.createElement('div', { 'data-wc-h': '' }, '提示词'),
+          React.createElement('div', { 'data-wc-h': '' }, '提示词', hasWorkspace ? h(WsMark) : null),
           // 🔴 把"到底会不会注入"直接摆给用户看（2026-09-16：真机上反复出现"没注入"，
           //    原因可能有一堆 —— 不是 MC 模式 / 开关关了 / 文件不在 —— 与其让人猜，不如显示判据）
           injectStatus
             ? React.createElement('div', { 'data-wc-injectstatus': '' },
-              `本会话注入：${injectStatus.mcPlus ? 'MC+模式' : 'MC模式'} ${mark(injectStatus.mcMode)} ｜ 本提示词 ${mark(seg['agents-md'])} ｜ 工作区 AGENTS.md ${mark(seg['workspace-agents-md'])}`
+              `本会话注入：${injectStatus.mcPlus ? 'MC+模式' : 'MC模式'} ${mark(injectStatus.mcMode)} ｜ 本提示词 RULES.md ${mark(seg['agents-md'])} ｜ 工作区 AGENTS.md ${mark(seg['workspace-agents-md'])}`
               + (injectStatus.mcPlus ? ` ｜ MC+ 说明 ${mark(seg['mc-plus-note'])}` : ''),
               injectStatus.notes?.length
                 ? React.createElement('div', { 'data-wc-note': '' }, injectStatus.notes.join(' ｜ '))
                 : null,
             )
             : null,
+          // 无工作区：正文只读、展示内置默认提示词（服务端回的 text 就是默认那份）
           React.createElement('textarea', {
             'data-wc-textarea': '', 'data-wc-tall': '', value: mdText, spellCheck: false,
             disabled: busy,
-            onChange: (e) => onMdText(e.target.value),
+            ...(hasWorkspace ? {} : { readOnly: true, 'data-wc-dimmed': '' }),
+            onChange: (e) => { if (hasWorkspace) onMdText(e.target.value) },
           }),
-          React.createElement(
-            'div',
-            { 'data-wc-acts': '' },
-            React.createElement('button', {
-              type: 'button', 'data-wc-btn': '', 'data-wc-tiny': '', 'data-wc-primary': '',
-              disabled: busy, onClick: onSave,
-            }, saveBusy ? '保存中…' : '保存'),
-            confirmReset
-              ? React.createElement('button', {
-                type: 'button', 'data-wc-btn': '', 'data-wc-tiny': '', 'data-wc-danger': '', disabled: busy,
-                title: '再点一次确认',
-                onClick: () => { setConfirmReset(false); onReset() },
-              }, resetBusy ? '恢复中…' : '确认恢复')
-              : React.createElement('button', {
-                type: 'button', 'data-wc-btn': '', 'data-wc-tiny': '', 'data-wc-danger': '', disabled: busy,
-                title: '恢复默认提示词',
-                onClick: () => setConfirmReset(true),
-              }, '恢复默认'),
-            confirmReset
-              ? React.createElement('button', {
-                type: 'button', 'data-wc-btn': '', 'data-wc-tiny': '', disabled: busy,
-                onClick: () => setConfirmReset(false),
-              }, '取消')
-              : null,
-          ),
+          hasWorkspace
+            ? React.createElement(
+              'div',
+              { 'data-wc-acts': '' },
+              React.createElement('button', {
+                type: 'button', 'data-wc-btn': '', 'data-wc-tiny': '', 'data-wc-primary': '',
+                disabled: busy, onClick: onSave,
+              }, saveBusy ? '保存中…' : '保存'),
+              confirmReset
+                ? React.createElement('button', {
+                  type: 'button', 'data-wc-btn': '', 'data-wc-tiny': '', 'data-wc-danger': '', disabled: busy,
+                  title: '再点一次确认',
+                  onClick: () => { setConfirmReset(false); onReset() },
+                }, resetBusy ? '恢复中…' : '确认恢复')
+                : React.createElement('button', {
+                  type: 'button', 'data-wc-btn': '', 'data-wc-tiny': '', 'data-wc-danger': '', disabled: busy,
+                  title: '恢复默认提示词',
+                  onClick: () => setConfirmReset(true),
+                }, '恢复默认'),
+              confirmReset
+                ? React.createElement('button', {
+                  type: 'button', 'data-wc-btn': '', 'data-wc-tiny': '', disabled: busy,
+                  onClick: () => setConfirmReset(false),
+                }, '取消')
+                : null,
+            )
+            : null,
         ),
         React.createElement('div', { 'data-wc-sec': '' },
           React.createElement('div', { 'data-wc-h': '' }, '注入'),
-          // 版本硬提示词：随插件版本发布、不可编辑，但用户有权知道它说了什么
-          injectStatus?.versionPrompt
+          // 版本硬提示词：随插件版本发布、不可编辑，但用户有权知道它说了什么。
+          // 🔴 **无工作区时照样显示**（它跟工作区无关），与前两个开关不同。
+          versionPrompt
             ? React.createElement('details', { 'data-wc-verprompt': '' },
               React.createElement('summary', {},
-                `本版本内置提示（随插件版本更新，不可编辑）：whale_craft v${injectStatus.versionPrompt.version}`),
-              React.createElement('pre', {}, String(injectStatus.versionPrompt.text ?? '')))
+                `本版本内置提示（随插件版本更新，不可编辑）：whale_craft v${versionPrompt.version}`),
+              React.createElement('pre', {}, String(versionPrompt.text ?? '')))
             : null,
-          // 「随版本更新」（默认开）：插件升级时用新版本默认准则替换当前这份（会覆盖你的修改）
-          React.createElement(Switch, {
-            label: '随版本更新',
-            desc: followBusy ? '保存中…' : '插件升级时，用新版本的默认提示词替换当前内容（会覆盖你的修改）',
-            disabled: busy,
-            on: followVersion === true,
-            onToggle: (next) => onFollowVersion(next),
-          }),
-          React.createElement('p', { 'data-wc-hint': '' },
-            `当前内容对应：${rulesVersion ? `v${rulesVersion}` : '未知（还没同步过）'}`,
-            `　·　本插件：v${pluginVersion || '?'}`),
-          React.createElement(Switch, {
-            label: '注入本提示词',
-            on: injectWc === true,
-            onToggle: (next) => onInjectWc(next),
-          }),
-          React.createElement(Switch, {
-            label: '注入工作区 AGENTS.md',
-            desc: wsExists ? undefined : '工作区里没有这个文件',
-            disabled: !wsExists,
-            on: injectWs === true,
-            onToggle: (next) => onInjectWs(next),
-          }),
+          // 三个开关只在**有工作区**时出现（它们的值按工作区存）
+          hasWorkspace
+            ? [
+              // 「随版本更新」（默认开）：插件升级时用新版本默认准则替换当前这份（会覆盖你的修改）
+              React.createElement(Switch, {
+                key: 'follow', label: '随版本更新', mark: true,
+                desc: followBusy ? '保存中…' : '插件升级时，用新版本的默认提示词替换当前内容（会覆盖你的修改）',
+                disabled: busy,
+                on: followVersion === true,
+                onToggle: (next) => onFollowVersion(next),
+              }),
+              // 注入本提示词（`<工作区>/.whale-craft/RULES.md`）：版本行作为它的说明，不再单独一行
+              React.createElement(Switch, {
+                key: 'wc', mark: true, title: '注入本提示词 RULES.md',
+                label: ['注入本提示词 ', h(FileName, { key: 'f', name: 'RULES.md', missing: rulesExists === false })],
+                desc: `当前内容对应：${rulesVersion ? `v${rulesVersion}` : '未知（还没同步过）'}　·　本插件：v${pluginVersion || '?'}`,
+                on: injectWc === true,
+                onToggle: (next) => onInjectWc(next),
+              }),
+              // 注入工作区 AGENTS.md（`<工作区>/AGENTS.md`）：**不因文件缺失禁用**（开关始终用于改配置）
+              React.createElement(Switch, {
+                key: 'ws', mark: true, title: '注入工作区 AGENTS.md',
+                label: ['注入工作区 ', h(FileName, { key: 'f', name: 'AGENTS.md', missing: wsExists === false })],
+                desc: 'MC+模式下将固定注入，不受本设置影响',
+                on: injectWs === true,
+                onToggle: (next) => onInjectWs(next),
+              }),
+            ]
+            : null,
         ),
+        !hasWorkspace ? h(WsNeedHint) : null,
       )
     }
 
@@ -1295,20 +1449,14 @@ select[data-wc-in]{appearance:none;padding-right:22px;
      */
     function SharePane(props) {
       const {
-        mode, base, share, busyKey,
-        onPickMode, onSaveBase, onUseCurrent, onClear,
+        on, base, share, busyKey, hasWorkspace,
+        onToggle, onSaveBase, onUseCurrent, onClear,
       } = props
       const busy = busyKey !== null
       const [baseText, setBaseText] = React.useState(base ?? '')
       const [confirmClear, setConfirmClear] = React.useState(false)
       React.useEffect(() => { setBaseText(base ?? '') }, [base])
 
-      const MODES = [
-        { id: 'off', name: '关闭', desc: '不分享：AI 只会告诉你文件的绝对路径，让你自己打开' },
-        { id: 'online', name: '在线', desc: '回完整 URL：要填 base，图片可以直接在对话里显示' },
-      ]
-      const online = mode === 'online'
-      const activeDesc = MODES.find((m) => m.id === mode)?.desc ?? ''
       const baseBusy = busyKey === 'share:base'
       const clearBusy = busyKey === 'share:clear'
       const dirty = (baseText ?? '') !== (base ?? '')
@@ -1317,46 +1465,45 @@ select[data-wc-in]{appearance:none;padding-right:22px;
         'div',
         { 'data-wc-pane-page': 'share' },
         React.createElement('div', { 'data-wc-sec': '' },
-          React.createElement('div', { 'data-wc-h': '' }, '分享模式'),
-          // 两个模式做成一排等宽的按钮（别用账户页那种带 × 的小标签：太窄、字也不居中）
-          React.createElement('div', { 'data-wc-modes': '' },
-            ...MODES.map((m) => React.createElement('button', {
-              key: m.id,
-              type: 'button', 'data-wc-mode': '', ...(mode === m.id ? { 'data-wc-mode-on': '' } : {}),
-              disabled: busy, title: m.desc,
-              onClick: () => { if (mode !== m.id) onPickMode(m.id) },
-            }, m.name))),
-          React.createElement('p', { 'data-wc-hint': '' }, activeDesc),
+          React.createElement('div', { 'data-wc-h': '' }, '文件分享'),
+          // 只有"开 / 关"（2026-10-04 用户定：不再有"模式"，在线是**唯一**方式）
+          React.createElement(Switch, {
+            label: '启用文件分享',
+            desc: on
+              ? '回完整 URL：图片可以直接在对话里显示'
+              : '不分享：AI 只会告诉你文件的绝对路径，让你自己打开',
+            disabled: busy,
+            on: on === true,
+            onToggle: (next) => onToggle(next),
+          }),
         ),
-        // base 只属于「在线」模式：关闭时不显示（免得让人以为关闭模式也吃 base）
-        online
-          ? React.createElement('div', { 'data-wc-sec': '' },
-            React.createElement('div', { 'data-wc-h': '' }, '在线 base'),
-            React.createElement('div', { 'data-wc-field': '' },
-              React.createElement('input', {
-                'data-wc-in': '', value: baseText, spellCheck: false, disabled: busy,
-                placeholder: 'https://example.com（可以带路径前缀）',
-                onChange: (e) => setBaseText(e.target.value),
-              }),
-            ),
-            React.createElement('p', { ...(!base ? { 'data-wc-hint': '', 'data-wc-dirty': '' } : { 'data-wc-hint': '' }) },
-              !base
-                ? '还没填 base：AI 暂时只能让你去设置。'
-                : '填你访问这台 DSH 用的地址。'),
-            React.createElement('div', { 'data-wc-acts': '' },
-              React.createElement('button', {
-                type: 'button', 'data-wc-btn': '', 'data-wc-tiny': '', 'data-wc-primary': '',
-                disabled: busy || !dirty, onClick: () => onSaveBase(baseText.trim()),
-              }, baseBusy ? '保存中…' : '保存 base'),
-              React.createElement('button', {
-                type: 'button', 'data-wc-btn': '', 'data-wc-tiny': '',
-                disabled: busy, title: '用你现在访问这个页面的地址填好并保存',
-                onClick: onUseCurrent,
-              }, '获取当前')),
-          )
-          : null,
+        // base 只在「开启」时可用：关闭时**禁用**（但保留可见，别让人以为设置消失了）
         React.createElement('div', { 'data-wc-sec': '' },
-          React.createElement('div', { 'data-wc-h': '' }, '分享数据'),
+          React.createElement('div', { 'data-wc-h': '' }, 'base 地址'),
+          React.createElement('div', { 'data-wc-field': '' },
+            React.createElement('input', {
+              'data-wc-in': '', value: baseText, spellCheck: false, disabled: busy || !on,
+              placeholder: 'https://example.com（可以带路径前缀）',
+              onChange: (e) => setBaseText(e.target.value),
+            }),
+          ),
+          React.createElement('p', { ...(on && !base ? { 'data-wc-hint': '', 'data-wc-dirty': '' } : { 'data-wc-hint': '' }) },
+            !on
+              ? '开启文件分享后才能设置 base。'
+              : (!base ? '还没填 base：AI 暂时只能让你去设置。' : '填你访问这台 DSH 用的地址。')),
+          React.createElement('div', { 'data-wc-acts': '' },
+            React.createElement('button', {
+              type: 'button', 'data-wc-btn': '', 'data-wc-tiny': '', 'data-wc-primary': '',
+              disabled: busy || !on || !dirty, onClick: () => onSaveBase(baseText.trim()),
+            }, baseBusy ? '保存中…' : '保存 base'),
+            React.createElement('button', {
+              type: 'button', 'data-wc-btn': '', 'data-wc-tiny': '',
+              disabled: busy || !on, title: '用你现在访问这个页面的地址填好并保存',
+              onClick: onUseCurrent,
+            }, '获取当前')),
+        ),
+        hasWorkspace ? React.createElement('div', { 'data-wc-sec': '' },
+          React.createElement('div', { 'data-wc-h': '' }, '分享数据', h(WsMark)),
           React.createElement('p', { 'data-wc-hint': '' },
             share?.dir
               ? `目录：${share.dir}${share.exists ? `　（${share.files} 个文件 / ${fmtBytes(share.bytes)}）` : '　（还没有这个目录）'}`
@@ -1386,7 +1533,8 @@ select[data-wc-in]{appearance:none;padding-right:22px;
             '「清除分享数据」会把上面那个目录里的文件',
             React.createElement('strong', {}, '全部删掉'),
             '，不可撤销。'),
-        ),
+        ) : null,
+        !hasWorkspace ? h(WsNeedHint) : null,
       )
     }
 
@@ -1406,24 +1554,27 @@ select[data-wc-in]{appearance:none;padding-right:22px;
     ]
 
     function McSettingsModal(props) {
-      // 🔴 提示词是**按会话工作区**的（`.whale-craft/AGENTS.md`），所以要把本会话 id 带上
+      // 🔴 提示词是**按会话工作区**的（`.whale-craft/RULES.md`），所以要把会话 id / 工作区 cwd 带上。
       const sessionId = props?.sessionId ?? null
-      const agentsMdPath = sessionId
-        ? '/api/mc/agents-md?sessionId=' + encodeURIComponent(sessionId)
-        : '/api/mc/agents-md'
-      /**
-       * 「MC设置」这组接口**都要带 sessionId**：服务端拿它定位**工作区**
-       * （没有选中工作区就 400 拒绝，见 index.js `settingsGate`）。
-       * 统一走 query（GET/POST/PATCH/DELETE 服务端都认），省得每个 body 都塞一遍。
-       */
       const wsCwd = props?.wsCwd ?? null
+      /**
+       * 设置接口统一走 query 带 `sessionId` / `cwd`：服务端拿它定位**工作区**。
+       * 两者都没有 = **无工作区模式**（从插件菜单等入口打开）：全局项照常，
+       * 工作区项由服务端回 `null`（见 index.js `configView` / `cwdOf`）。
+       */
       const withSid = (p) => {
         const q = []
         if (sessionId) q.push('sessionId=' + encodeURIComponent(sessionId))
         if (wsCwd) q.push('cwd=' + encodeURIComponent(wsCwd))
         return q.length ? p + (p.includes('?') ? '&' : '?') + q.join('&') : p
       }
-      const [open, setOpen] = React.useState(false)
+      const agentsMdPath = withSid('/api/mc/agents-md')
+
+      // 开关：**可选受控** —— 会话入口（标题条 / hero）走 settingsBus（非受控）；
+      // 插件详情页那个 root 作用域入口自带 open / onClose（受控）。
+      const controlled = props?.open !== undefined
+      const [internalOpen, setInternalOpen] = React.useState(false)
+      const open = controlled ? props.open === true : internalOpen
       const [tab, setTab] = React.useState('accounts')
       const [accounts, setAccounts] = React.useState([])
       const [servers, setServers] = React.useState([])
@@ -1439,13 +1590,20 @@ select[data-wc-in]{appearance:none;padding-right:22px;
       const [followVersion, setFollowVersion] = React.useState(true)
       const [rulesVersion, setRulesVersion] = React.useState(null)
       const [pluginVersion, setPluginVersion] = React.useState('')
+      // 版本内置提示词（随版本发布、只读）——**无工作区时也要显示**，来自 agents-md 顶层字段
+      const [versionPrompt, setVersionPrompt] = React.useState(null)
       // 「文件分享」：模式（off 关闭 / online 在线）+ base + 发布区现状
-      const [shareMode, setShareMode] = React.useState('off')
+      const [shareOn, setShareOn] = React.useState(false)
       const [shareBase, setShareBase] = React.useState('')
       const [shareInfo, setShareInfo] = React.useState(null)
       const [wsPath, setWsPath] = React.useState('')
       const [wsExists, setWsExists] = React.useState(false)
+      // 本提示词那个文件（RULES.md）在不在 —— 给名字加"缺失"样式用
+      const [rulesExists, setRulesExists] = React.useState(true)
       const [injectStatus, setInjectStatus] = React.useState(null)
+      // 有没有工作区（服务端 config 回的权威值）；无则工作区项隐藏/只读
+      const [hasWorkspace, setHasWorkspace] = React.useState(Boolean(wsCwd))
+      const [workspaceName, setWorkspaceName] = React.useState('')
       const [loading, setLoading] = React.useState(false)
       const [loaded, setLoaded] = React.useState(false)
       const [loadError, setLoadError] = React.useState('')
@@ -1454,12 +1612,19 @@ select[data-wc-in]{appearance:none;padding-right:22px;
       const [busyKey, setBusyKey] = React.useState(null)
 
       // 关闭函数（点遮罩 / × / Esc 共用；也供下面的订阅使用）
-      const close = React.useCallback(() => { setOpen(false) }, [])
+      const close = React.useCallback(() => {
+        setSaved('')          // 关掉时把顶部"已保存"提示也清掉（组件不卸载，别留着）
+        if (controlled) { if (typeof props.onClose === 'function') props.onClose() } else { setInternalOpen(false) }
+      }, [controlled, props.onClose])
       // 模块级总线订阅：hero 那个 DOM 按钮没有 React 上下文，只能靠它叫醒这里。
+      // 受控模式（详情页入口）不开总线，直接由父组件开关。
       // 用 ref 存最新函数，订阅只建一次，避免重复订阅/闭包过期。
       const openRef = React.useRef(null)
-      openRef.current = () => { setError(''); setSaved(''); setOpen(true) }
-      React.useEffect(() => settingsBus.subscribe(() => { openRef.current?.() }), [])
+      openRef.current = () => { setError(''); setSaved(''); setInternalOpen(true) }
+      React.useEffect(() => {
+        if (controlled) return undefined
+        return settingsBus.subscribe(() => { openRef.current?.() })
+      }, [controlled])
 
       /**
        * 一次读齐三页要的东西：账户 / 配置（白名单+注入开关）/ 提示词。
@@ -1476,15 +1641,20 @@ select[data-wc-in]{appearance:none;padding-right:22px;
             setDefaultAccount(a.defaultAccount ?? null)
           }),
           apiGet(withSid('/api/mc/config')).then((c) => {
+            const hasWs = c.hasWorkspace === true
+            setHasWorkspace(hasWs)
+            setWorkspaceName(String(c.workspaceName ?? ''))
             setWlText(whitelistToText(c.commandWhitelist))
             setAllowAll(c.allowAllCommands === true)
             setInjectWc(c.injectWhaleCraftAgentsMd !== false)
             setInjectWs(c.injectWorkspaceAgentsMd === true)
-            setShareMode(c.expressMode === 'online' ? 'online' : 'off')
+            setShareOn(c.expressEnabled === true)
             setShareBase(String(c.expressBase ?? ''))
-          }).catch((e) => { setError(errorText(e)) }),
-          apiGet(withSid('/api/mc/express')).then((s) => {
-            setShareInfo(s ?? null)
+            // 发布区是**按工作区**的：没有工作区时那个接口直接 400，别去碰它。
+            if (!hasWs) { setShareInfo(null); return null }
+            return apiGet(withSid('/api/mc/express')).then((s) => {
+              setShareInfo(s ?? null)
+            }).catch((e) => { setError(errorText(e)) })
           }).catch((e) => { setError(errorText(e)) }),
           apiGet(agentsMdPath).then((m) => {
             setMdText(String(m.text ?? ''))
@@ -1492,6 +1662,8 @@ select[data-wc-in]{appearance:none;padding-right:22px;
             setMdPath(String(m.path ?? ''))
             setWsPath(String(m.workspacePath ?? ''))
             setWsExists(m.workspaceExists === true)
+            setRulesExists(m.rulesExists !== false)
+            setVersionPrompt(m.versionPrompt ?? null)
             setInjectStatus(m.injection ?? null)
             setFollowVersion(m.followVersion !== false)
             setRulesVersion(m.rulesVersion ?? null)
@@ -1517,6 +1689,17 @@ select[data-wc-in]{appearance:none;padding-right:22px;
           document.body.style.overflow = prev
         }
       }, [open, close])
+
+      /**
+       * 顶部「已保存」提示：**3 秒后自动消失**。
+       * 🔴 定时器必须在 saved 变化 / 组件卸载时清掉 —— 否则清场后 3s 到点还会去 setState。
+       * （窗口关闭不卸载本组件，所以 close 里也顺手清一次 saved。）
+       */
+      React.useEffect(() => {
+        if (!saved) return undefined
+        const t = setTimeout(() => setSaved(''), 3000)
+        return () => clearTimeout(t)
+      }, [saved])
 
       /** 所有动作的统一出口：置忙 → 跑 → 刷新 → 归一化错误 */
       const run = React.useCallback((key, fn, okMsg) => {
@@ -1612,10 +1795,10 @@ select[data-wc-in]{appearance:none;padding-right:22px;
       }, [run, followVersion])
 
       /* ── 页 4：文件分享 ──
-       * 模式**一点就存**（同"允许所有指令"那个开关：错了回滚）；base 走「保存」按钮；
+       * 开关**一拨就存**（同"允许所有指令"那个开关：错了回滚）；base 走「保存」按钮；
        * 「获取当前」= 用**你现在访问这个页面的地址**填好并保存；
-       * 🔴 切到「在线」而 base 还没设时，自动做一次"获取当前"（不然在线模式当场没用）；
-       * 但**不去调就不写**：不切到在线、不点按钮，base 永远保持原样。
+       * 🔴 **开启**而 base 还没设时，自动做一次"获取当前"（不然开启当场没用）；
+       * 但**不去调就不写**：不开、不点按钮，base 永远保持原样。
        * 清除分享数据**必须确认**（不可撤销）。
        * ⚠️ 输入框的文本状态在 SharePane 内部（`baseText`），这里**不能**去 setBaseText：
        *    保存完 `load()` 会刷新 `shareBase`，pane 的 useEffect（+ key 变化）会自己同步回输入框。 */
@@ -1626,21 +1809,21 @@ select[data-wc-in]{appearance:none;padding-right:22px;
         return apiGet(withSid('/api/mc/express') + q).then((s) => String(s?.currentBase ?? ''))
       }, [withSid])
 
-      const pickShareMode = React.useCallback((next) => {
-        const prev = shareMode
+      const toggleShare = React.useCallback((next) => {
+        const prev = shareOn
         if (next === prev) return Promise.resolve(true)
-        setShareMode(next)                                           // 乐观更新
-        // 切到在线且还没 base → 顺手把当前地址一起保存（一次动作，别让用户自己去找地址）
-        const autoBase = next === 'online' && !shareBase
-        return run('share:mode', () => (autoBase
+        setShareOn(next)                                             // 乐观更新
+        // 开启且还没 base → 顺手把当前地址一起保存（一次动作，别让用户自己去找地址）
+        const autoBase = next === true && !shareBase
+        return run('share:on', () => (autoBase
           ? fetchCurrentBase().then((cur) => apiPatch(withSid('/api/mc/config'),
-            cur ? { expressMode: next, expressBase: cur } : { expressMode: next }))
-          : apiPatch(withSid('/api/mc/config'), { expressMode: next })),
-        next === 'online'
-          ? (autoBase ? '已切到在线，base 用当前地址填好了' : '文件分享：在线')
+            cur ? { expressEnabled: true, expressBase: cur } : { expressEnabled: true }))
+          : apiPatch(withSid('/api/mc/config'), { expressEnabled: next })),
+        next
+          ? (autoBase ? '文件分享已开启，base 用当前地址填好了' : '文件分享：已开启')
           : '文件分享：已关闭')
-          .then((ok) => { if (!ok) setShareMode(prev); return ok })   // 失败回滚
-      }, [run, shareMode, shareBase, fetchCurrentBase])
+          .then((ok) => { if (!ok) setShareOn(prev); return ok })    // 失败回滚
+      }, [run, shareOn, shareBase, fetchCurrentBase])
 
       const saveShareBase = React.useCallback((text) =>
         run('share:base', () => apiPatch(withSid('/api/mc/config'), { expressBase: String(text ?? '') }),
@@ -1668,17 +1851,17 @@ select[data-wc-in]{appearance:none;padding-right:22px;
         })
         : (tab === 'prompt'
           ? React.createElement(PromptPane, {
-            key: 'prompt:' + mdSource + ':' + wsExists,
-            mdText, mdSource, mdPath, wsPath, wsExists, injectStatus, injectWc, injectWs, busyKey,
-            followVersion, rulesVersion, pluginVersion,
+            key: 'prompt:' + mdSource + ':' + wsExists + ':' + (hasWorkspace ? 'ws' : 'nows'),
+            mdText, mdSource, mdPath, wsPath, wsExists, rulesExists, injectStatus, injectWc, injectWs, busyKey,
+            followVersion, rulesVersion, pluginVersion, versionPrompt, hasWorkspace,
             onMdText: setMdText, onSave: saveAgentsMd, onReset: resetAgentsMd,
             onInjectWc: toggleInjectWc, onInjectWs: toggleInjectWs, onFollowVersion: toggleFollowVersion,
           })
           : (tab === 'share'
             ? React.createElement(SharePane, {
-              key: 'share:' + shareMode + ':' + shareBase,
-              mode: shareMode, base: shareBase, share: shareInfo, busyKey,
-              onPickMode: pickShareMode, onSaveBase: saveShareBase, onUseCurrent: useCurrentBase, onClear: clearShare,
+              key: 'share:' + (shareOn ? 'on' : 'off') + ':' + shareBase,
+              on: shareOn, base: shareBase, share: shareInfo, busyKey, hasWorkspace,
+              onToggle: toggleShare, onSaveBase: saveShareBase, onUseCurrent: useCurrentBase, onClear: clearShare,
             })
             : React.createElement(AccountsPane, {
             accounts, servers, defaultAccount, busyKey,
@@ -1686,6 +1869,13 @@ select[data-wc-in]{appearance:none;padding-right:22px;
             onCreate: createAccount, onAddServer: addServer, onAddCard: addServerCard,
             onRemoveServer: removeServer,
           })))
+
+      // 头部显示的工作区名（仅"有工作区"时显示）：注册表 title → 回退路径尾段；default-workspace 给中文名
+      const wsDisplayName = hasWorkspace
+        ? (workspaceName === 'default-workspace'
+            ? '默认工作区'
+            : workspaceName || (wsCwd ? String(wsCwd).split(/[\\/]/).filter(Boolean).pop() : ''))
+        : ''
 
       return React.createElement(
         'div',
@@ -1708,14 +1898,24 @@ select[data-wc-in]{appearance:none;padding-right:22px;
             React.createElement(
               'div',
               { 'data-wc-titlewrap': '' },
-              React.createElement('span', { 'data-wc-title': '' }, 'MC设置'),
+              React.createElement(
+                'div',
+                { 'data-wc-titleline': '' },
+                React.createElement('span', { 'data-wc-title': '' }, 'MC设置'),
+                hasWorkspace
+                  ? React.createElement('span', { 'data-wc-wsname': '', title: wsCwd || '' },
+                    IconFolderOpenRegular ? React.createElement(IconFolderOpenRegular, { size: 16 }) : null,
+                    React.createElement('span', null, wsDisplayName || '工作区'),
+                  )
+                  : null,
+              ),
             ),
             React.createElement('span', { 'data-wc-grow': '' }),
             busy ? React.createElement('span', { 'data-wc-dim': '', style: { fontSize: '11px' } }, '处理中…') : null,
             React.createElement('button', {
-              type: 'button', 'data-wc-btn': '', 'data-wc-tiny': '', title: '关闭（Esc）',
+              type: 'button', 'data-wc-xbtn': '', title: '关闭（Esc）', 'aria-label': '关闭',
               onClick: close,
-            }, '×'),
+            }, IconCloseOutlineRegular ? React.createElement(IconCloseOutlineRegular, { size: 14 }) : '×'),
           ),
           React.createElement(
             'div',
@@ -1730,7 +1930,7 @@ select[data-wc-in]{appearance:none;padding-right:22px;
                 ...(tab === t.id ? { 'data-wc-tab-on': '' } : {}),
                 role: 'tab',
                 'aria-selected': tab === t.id ? 'true' : 'false',
-                onClick: () => setTab(t.id),
+                onClick: () => { setSaved(''); setTab(t.id) },   // 切标签页 → 顶部提示立刻消失
               }, t.label)),
             ),
             React.createElement(
@@ -1781,6 +1981,13 @@ select[data-wc-in]{appearance:none;padding-right:22px;
         ctx.slots.inject('conversation.input.right', () => ctx.slots.register(
           { name: 'conversation.input.right', id: 'whale_craft-mc-settings-hero', order: 20 },
           McSettingsDockEntry,
+        ))
+
+        // 「MC设置」入口③：**插件页 → whale_craft 详情页**头部按钮（演示，暂无功能）。
+        // root 作用域、无会话 —— 组件自己按 subject 过滤，只认 whale_craft 的 bundle 页。
+        ctx.slots.inject('plugins.detail.actions', () => ctx.slots.register(
+          { name: 'plugins.detail.actions', id: 'whale_craft-mc-settings-detail', order: 20 },
+          McSettingsDetailEntry,
         ))
 
         // 只做一次性清理：摘掉历史版本用 MutationObserver 注入的按钮。

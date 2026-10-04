@@ -156,7 +156,7 @@ kind 变化先 release 再套新）：
 
 ## 9. HTTP 面与安全
 
-**信任栅栏**（`isTrustedRequest`，照抄 dsh-serve 的同款）：Host 必须回环或 ∈ `webRuntime.trustedHosts`；`Sec-Fetch-Site: cross-site` 拒；带 Origin 时 host 必须一致。非信任一律 403。两条顶层前缀路由各自独立过栅栏：`/api/mc/*` 与 `/api/whale-craft/express/*`（后者**只在 online 分享模式注册**）。
+**信任栅栏**（`isTrustedRequest`，照抄 dsh-serve 的同款）：Host 必须回环或 ∈ `webRuntime.trustedHosts`；`Sec-Fetch-Site: cross-site` 拒；带 Origin 时 host 必须一致。非信任一律 403。两条顶层前缀路由各自独立过栅栏：`/api/mc/*` 与 `/api/whale-craft/express/*`（后者**只在文件分享开启时注册**）。
 
 | 方法 + 路径 | 用途 |
 | --- | --- |
@@ -165,15 +165,16 @@ kind 变化先 release 再套新）：
 | GET `/api/mc/mode?sessionId=` | preset 判据（`mcMode` / `mcPlus`）+ hasWorkspace + 注入诊断（**可重试兜底**用，前端主判据在本地） |
 | GET `/api/mc/presets` | preset 名单（**必须在 settingsGate 之前**，否则前端静默兜底） |
 | POST `/api/mc/stop` | 强制停止（`cancelTurn: true`） |
-| `/api/mc/accounts`（GET/POST/PATCH/DELETE）+ `/accounts/refresh` | 账户 CRUD / 改名 / 探测刷新（`probeBot.authOnly`） |
-| `/api/mc/authservers`（POST/DELETE） | 认证服务器增删（`parseAuthlibCard` 解析卡片） |
-| `/api/mc/config`（GET/PATCH） | 配置读写（**分流**：全局键 → PluginConfig；提示词三开关 → 该工作区的 config.json） |
-| `/api/mc/agents-md`（GET/PUT/DELETE） | RULES.md 读/写/恢复默认 |
+| `/api/mc/accounts`（GET/POST/PATCH/DELETE）+ `/accounts/refresh` | 账户 CRUD / 改名 / 探测刷新（`probeBot.authOnly`）。**全局数据，不绑工作区**（不走闸门） |
+| `/api/mc/authservers`（POST/DELETE） | 认证服务器增删（`parseAuthlibCard` 解析卡片）。同样**不绑工作区** |
+| `/api/mc/config`（GET/PATCH） | 配置读写（**分流**：全局键 → PluginConfig；提示词三开关 → 该工作区的 config.json）。**可无工作区**：工作区键回 `null` / PATCH 丢弃工作区键 |
+| `/api/mc/agents-md`（GET/PUT/DELETE） | RULES.md 读/写/恢复默认。**GET 可无工作区**（只读回内置默认 `DEFAULT_AGENTS_MD`）；PUT/DELETE 必须有工作区 |
 | `/api/mc/express`（GET/DELETE） | 分享状态 / 「清除分享数据」 |
 | GET/HEAD `/api/whale-craft/express/<工作区uuid>/<相对路径>` | 发布区文件（仅 online 模式） |
 
 - **设置类 API 的错误形态统一 200 + `{ok:false, error, needUserAction?, hint?}`**（前端 `apiFetch` 要求 `payload.ok===true`）。
-- **settingsGate**：sessionId → 工作区（或 client cwd）；查不到**不猜**、400 拒绝；顺带 `ensureMemoryRootForCwd`（"点开 MC设置"是仅有的两个建记忆目录时机之一）。
+- **设置两类模式（2026-10-04）**：`resolveWorkspaceCwd` 解析 sessionId → 工作区（或 client 报的 cwd），**可空、不建档**；`settingsGate` = 它 + 查不到就 400 + `ensureMemoryRootForCwd`（"点开 MC设置"是仅有的两个建记忆目录时机之一）。**accounts / authservers 是全局数据、不走闸门**；`/api/mc/config` 与 `agents-md` GET **可无工作区**（前者只回全局键、工作区键为 `null`；后者只读回内置默认）。`/api/mc/express` 仍必须有工作区。
+  🔴 无工作区时**绝不能**把 `null` 喂给 `wsCfgValues` / `memoryRootFor` —— `memoryRootFor(null)` 会兜底到 `stateDir(/memory)` 这个**全局**目录。
 - **express 路由安全**：uuid 是 DSH 工作区注册表的**稳定 id**（查不到就 404，**不退回目录名**）；路径**逐段**白名单拼接（`..`/`.`/空段/段内分隔符/盘符/`~`/控制字符一律拒）→ 拼完 `realpath` 复查仍在发布区内（**符号链接也出不去**）；不列目录；单文件 ≤32MB；svg/html 加 `Content-Security-Policy: sandbox`。
 - **base 推导链**（online 模式"获取当前"）：浏览器 `location.origin` → `Origin` 头 → 同源 `Referer` → `X-Forwarded-Proto`+`Host` → `Host`。
 
@@ -182,11 +183,12 @@ kind 变化先 release 再套新）：
 | 目录 | 谁能拿 | 用途 |
 | --- | --- | --- |
 | `<工作区>/.whale-craft/.out/` | 谁都拿不到 | 默认输出（`mc_map image`、`mc_kit_image` 落盘） |
-| `<工作区>/.whale-craft/.express/` | 取决于分享模式 | 发布区（**目录即白名单**，支持子目录） |
+| `<工作区>/.whale-craft/.express/` | 取决于文件分享开关 | 发布区（**目录即白名单**，支持子目录） |
 
-- `expressMode: off`（默认）：`mc_kit_express` 恒回 `EXPRESS_OFF_TEXT`（让 AI 把绝对路径给用户），路由不存在（访问即 404）。
-- `expressMode: online`：回 `base + /api/whale-craft/express/<uuid>/<rel>` 完整 URL；缺 base 回 `EXPRESS_NEED_BASE_TEXT`（报错不抛异常）。老配置 `local` 一律当 `off`。
-- 前端渲染只认**绝对 http(s)** 图片地址 ⇒ 只有 online 的 URL 能内联成图。
+- `expressEnabled: false`（默认）：`mc_kit_express` 恒回 `EXPRESS_OFF_TEXT`（让 AI 把绝对路径给用户），路由不存在（访问即 404）。
+- `expressEnabled: true`：回 `base + /api/whale-craft/express/<uuid>/<rel>` 完整 URL；缺 base 回 `EXPRESS_NEED_BASE_TEXT`（报错不抛异常）。
+- 🔴 2026-10-04 前是 `expressMode: 'off' | 'online'`（还一度有 `local`）；用户定"以后只有在线这一种方式" ⇒ 降级成布尔开关，老值由 `PluginConfig.migrate` 搬过来（`online`→`true`，其余→`false`，删旧键）。
+- 前端渲染只认**绝对 http(s)** 图片地址 ⇒ 只有开启分享的 URL 能内联成图。
 
 ## 11. 停止、归档与保护
 
@@ -239,4 +241,4 @@ kind 变化先 release 再套新）：
 - `plugins.detail.actions` / `.badge` / `.section`（list）：详情页按钮/徽章/区块；组件收到 `subject`，不是本包时渲染 null。
 - `pluginNavigation.openBundle('whale_craft')`：从任何地方跳到插件页并打开指定包（反向入口）。
 - 槽组件可用标准 hooks：`useSessions` / `useWorkspaces` / `usePanelInfo` / `useResource` 等。
-- ⚠️ 全局设置/插件页**没有会话上下文**——MC 设置（settingsGate 要 sessionId/cwd）接入时先解决工作区来源（待做）。
+- ✅ 插件详情页的「设置」入口（`plugins.detail.actions`，root 作用域、无会话/工作区）：模态框走**无工作区模式** —— 全局项可编辑，工作区项隐藏/只读，详见 [client-ui.md](client-ui.md)。

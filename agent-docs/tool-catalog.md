@@ -90,4 +90,4 @@
 ## 历史变更（防混淆）
 
 - **`mc_kit_share`（及 `mc_map` 的 `share` 参数）已删除**（2026-09-16）：它只是在调宿主**另装**的 `dsh-file-host`，插件本身没有文件服务器。"让用户看到文件"改走：宿主 `present`（显式文件交付）+ 本插件的 `mc_kit_express`。自检里有"mc_kit_share 已移除 / 源码无文件服务器残留"的断言——老名字不要再出现。
-- 分享模式 `local`（Windows 本地）已砍，老配置值一律当 `off`。
+- 文件分享 2026-10-04 起是**开关**（`expressEnabled`），不再有"模式"；老配置里的 `expressMode`（含 `local`）由 `PluginConfig.migrate` 搬成布尔（`online`→`true`，其余→`false`）。

@@ -505,6 +505,22 @@ export function apply(ctx, rawConfig) {
     return null
   }
 
+  /** cwd → 工作区显示名（注册表里的 `title`；查不到 = null。前端回退路径尾段） */
+  const workspaceTitleOfCwd = (cwd) => {
+    const s = typeof cwd === 'string' ? cwd.trim() : ''
+    if (!s || !isAbsolute(s)) return null
+    let real = s
+    try { real = realpathSync(s) } catch { /* 目录可能还不存在，就用原样比 */ }
+    for (const w of workspaceRows()) {
+      const p = String(w?.path ?? '')
+      if (p && (p === real || p === s)) {
+        const title = String(w?.title ?? '').trim()
+        return title || null
+      }
+    }
+    return null
+  }
+
   /* ─────────── 「文件分享」页要的两件事：看现状 / 清除数据（用户 2026-09-17 定）───────────
    * · 现状 = 这个工作区的发布区在哪、攒了几个文件、多大（分享模式本身是全局配置，见 configView）；
    * · 清除 = 用户确认后把 `.express/` 下的东西**全删掉**（目录自己留着，AI 不用重新建）。
@@ -869,18 +885,27 @@ export function apply(ctx, rawConfig) {
    * 设置页要的那几项配置（集中一处，GET/PATCH 共用）。
    * 全局键来自 PluginConfig（`$DSH_HOME/whale_craft/config.json`）；
    * 三个提示词开关是**按工作区**的（`<记忆根>/config.json`，src/wsconfig.mjs）。
+   *
+   * 🔴 `cwd` 可为 **null**（从插件菜单等"无会话/无工作区"入口打开设置时）：
+   *    此时只回全局键，工作区键一律 `null`。**绝不能**把 null 喂给
+   *    `wsCfgValues` / `wsConfigPath(memoryRootFor(null))` —— `memoryRootFor(null)`
+   *    会兜底到 `stateDir(/memory)` 这个**全局**目录（见 memoryRootFor），
+   *    那等于把"无工作区"错当成一个真实工作区去读写。
    */
   const configView = (cwd) => {
-    const ws = wsCfgValues(cwd)
+    const hasWorkspace = Boolean(cwd)
+    const ws = hasWorkspace ? wsCfgValues(cwd) : null
     return {
+      hasWorkspace,
+      workspaceName: hasWorkspace ? workspaceTitleOfCwd(cwd) : null,
       commandWhitelist: pluginConfig.get('commandWhitelist'),
       allowAllCommands: pluginConfig.get('allowAllCommands'),
-      injectWhaleCraftAgentsMd: ws.injectWhaleCraftAgentsMd,
-      injectWorkspaceAgentsMd: ws.injectWorkspaceAgentsMd,
+      injectWhaleCraftAgentsMd: ws ? ws.injectWhaleCraftAgentsMd : null,
+      injectWorkspaceAgentsMd: ws ? ws.injectWorkspaceAgentsMd : null,
       // 「提示词」页的「随版本更新」（默认开；按工作区）
-      rulesFollowVersion: ws.rulesFollowVersion !== false,
-      // 「MC设置 → 文件分享」：模式 + 在线 base（两种模式：off 关闭 / online 在线）
-      expressMode: pluginConfig.expressMode,
+      rulesFollowVersion: ws ? ws.rulesFollowVersion !== false : null,
+      // 「MC设置 → 文件分享」：开关 + base（只有"在线"这一种方式，见 config.mjs `expressEnabled`）
+      expressEnabled: pluginConfig.expressEnabled,
       expressBase: pluginConfig.expressBase,
       // 「MC设置」入口的模式门控：前端拿这份名单 + 会话记录的 preset 就能**本地**判定
       // （不必为按钮问一次服务端；2026-09-16 事故：一次性请求失败后按钮永久消失）
@@ -888,7 +913,7 @@ export function apply(ctx, rawConfig) {
       // 其中哪些是 **MC+ 变体**（前端显示「MC+模式」标签用；显示名仍以宿主 preset 的 name 为准）
       mcPlusPresets: pluginConfig.mcPlusPresets,
       configFile: pluginConfig.file,
-      workspaceConfigFile: wsConfigPath(memoryRootFor(cwd)),
+      workspaceConfigFile: hasWorkspace ? wsConfigPath(memoryRootFor(cwd)) : null,
     }
   }
 
@@ -905,24 +930,19 @@ export function apply(ctx, rawConfig) {
       return ok({ mcModePresets: pluginConfig.mcModePresets })
     }
 
-    /**
-     * 「MC设置」这组接口的**工作区闸门**（用户 2026-09-16）：
-     *   · **没有选中工作区 → 拒绝**（400），不猜、也不落到 `$DSH_HOME` 兜底目录；
-     *   · 顺带承担"**点开 MC设置**"这个时机：把该工作区的 `.whale-craft/`（README.md / RULES.md）备好。
-     */
-    /**
-     * 「MC设置」这组接口的**工作区闸门**（用户 2026-09-16）：
-     *   · 优先按 sessionId 找会话的工作区；
-     *   · 新对话页那个会话可能**还没落盘**（客户端已经选好工作区了）→ 允许客户端直接报 `cwd`；
-     *   · 都没有 → 拒绝（400），不猜、也不落到 `$DSH_HOME` 兜底目录。
-     *   · 顺带承担"**点开 MC设置**"这个时机：把该工作区的 `.whale-craft/` 备好。
-     */
     const usableWorkspace = (p) => {
       const s = String(p ?? '').trim()
       if (!s || !isAbsolute(s)) return null
       try { return statSync(s).isDirectory() ? s : null } catch { return null }
     }
-    const settingsGate = async (sessionId, cwdHint) => {
+    /**
+     * 解析"这次请求属于哪个工作区"（**可空、不报错、不建档**）。
+     *   · 优先按 sessionId 找会话的工作区；
+     *   · 新对话页那个会话可能**还没落盘**（客户端已经选好工作区了）→ 允许客户端直接报 `cwd`；
+     *   · 都没有 → `null`（"无工作区"模式：从插件菜单等入口打开设置时）。
+     * 🔴 建档（`ensureMemoryRootForCwd`）**不**在这里做 —— 只有真拿到工作区的请求才该建。
+     */
+    const resolveWorkspaceCwd = async (sessionId, cwdHint) => {
       const sid = String(sessionId ?? '').trim()
       let cwd = sid ? await workspaceOfSession(sid) : null
       let from = cwd ? 'session' : null
@@ -930,7 +950,18 @@ export function apply(ctx, rawConfig) {
         cwd = usableWorkspace(cwdHint)
         if (cwd) from = 'client'
       }
-      if (!cwd) {
+      return cwd ? { cwd, from } : null
+    }
+    /**
+     * 「MC设置」这组接口的**工作区闸门**（用户 2026-09-16）：没有工作区 → 拒绝（400），
+     * 不猜、也不落到 `$DSH_HOME` 兜底目录。顺带承担"**点开 MC设置**"这个时机：
+     * 把该工作区的 `.whale-craft/`（README.md / RULES.md）备好。
+     * （"无工作区也能用"的接口改用下面的 `cwdOf`，不走这里。）
+     */
+    const settingsGate = async (sessionId, cwdHint) => {
+      const r = await resolveWorkspaceCwd(sessionId, cwdHint)
+      if (!r) {
+        const sid = String(sessionId ?? '').trim()
         return {
           ok: false,
           error: sid
@@ -938,17 +969,23 @@ export function apply(ctx, rawConfig) {
             : '缺少 sessionId：这组接口只在某个会话里可用（要用它的工作区放记忆与提示词）；新对话页请先选好工作区。',
         }
       }
-      ensureMemoryRootForCwd(cwd)
-      return { ok: true, cwd, from }
+      ensureMemoryRootForCwd(r.cwd)
+      return { ok: true, cwd: r.cwd, from: r.from }
     }
     const gateOf = (b) => settingsGate(
       url.searchParams.get('sessionId') ?? b?.sessionId,
       url.searchParams.get('cwd') ?? b?.cwd,
     )
+    /** 可空版：解析工作区，拿不到就 `null`（给"无工作区也能用"的接口；**不建档**）。 */
+    const cwdOf = (b) => resolveWorkspaceCwd(
+      url.searchParams.get('sessionId') ?? b?.sessionId,
+      url.searchParams.get('cwd') ?? b?.cwd,
+    ).then((r) => (r ? r.cwd : null))
 
+    /* 账户 / 认证服务器是**全局**数据（`$DSH_HOME/whale_craft/accounts.json` + 凭据库），
+     * 不绑工作区：从插件菜单等"无工作区"入口打开设置也要能增删账户 —— 所以这组**不走 settingsGate**。
+     * （顺带"点开设置即建档 .whale-craft"的副作用改由 config GET 承担，见下。） */
     if (path === '/api/mc/accounts' && req.method === 'GET') {
-      const gate = await gateOf()
-      if (!gate.ok) return sendJson(res, 400, { ok: false, error: gate.error })
       return ok({
         defaultAccount: accounts.resolve()?.innerID ?? null,
         authServers: accounts.listAuthServers(),
@@ -957,8 +994,6 @@ export function apply(ctx, rawConfig) {
       })
     }
     if (path === '/api/mc/accounts' && req.method === 'POST') {
-      const gate = await gateOf(body)
-      if (!gate.ok) return sendJson(res, 400, { ok: false, error: gate.error })
       // 第三方账户：允许**顺手把认证服务器记住**——前端「新建第三方账户」就是"先填服务器、再填账号密码"，
       // 只给一个地址，这里负责 resolve-or-create（免得前端要发两次请求、也不怕重复地址）。
       let serverId = body.serverId ? String(body.serverId) : null
@@ -984,20 +1019,14 @@ export function apply(ctx, rawConfig) {
       return ok({ account: accounts.view(accounts.get(acc.innerID)) })
     }
     if (path === '/api/mc/accounts' && req.method === 'PATCH') {
-      const gate = await gateOf(body)
-      if (!gate.ok) return sendJson(res, 400, { ok: false, error: gate.error })
       const patch = { ...body }
       delete patch.innerID
       return ok({ account: accounts.update(String(body.innerID ?? ''), patch) })
     }
     if (path === '/api/mc/accounts' && req.method === 'DELETE') {
-      const gate = await gateOf(body)
-      if (!gate.ok) return sendJson(res, 400, { ok: false, error: gate.error })
       return ok(await accounts.remove(String(body.innerID ?? '')))
     }
     if (path === '/api/mc/accounts/refresh' && req.method === 'POST') {
-      const gate = await gateOf(body)
-      if (!gate.ok) return sendJson(res, 400, { ok: false, error: gate.error })
       const innerID = String(body.innerID ?? '')
       const resolved = await resolveAuth(innerID)
       if (resolved.auth.mode === 'offline') {
@@ -1009,8 +1038,6 @@ export function apply(ctx, rawConfig) {
       return ok({ account: accounts.view(accounts.get(innerID)) })
     }
     if (path === '/api/mc/authservers' && req.method === 'POST') {
-      const gate = await gateOf(body)
-      if (!gate.ok) return sendJson(res, 400, { ok: false, error: gate.error })
       let url = body.url ? String(body.url) : null
       if (!url && body.card) {
         url = parseAuthlibCard(body.card)
@@ -1020,28 +1047,29 @@ export function apply(ctx, rawConfig) {
       return ok({ server: accounts.addAuthServer({ name: body.name ? String(body.name) : null, url }) })
     }
     if (path === '/api/mc/authservers' && req.method === 'DELETE') {
-      const gate = await gateOf(body)
-      if (!gate.ok) return sendJson(res, 400, { ok: false, error: gate.error })
       return ok(accounts.removeAuthServer(String(body.id ?? '')))
     }
+    /* `/api/mc/config` **可无工作区**（全局键照常，工作区键为 null）。
+     * 顺带承担"点开 MC设置即建档 .whale-craft"这个时机 —— 但**只在该请求真有工作区时**，
+     * 否则 `memoryRootFor(null)` 会落到全局兜底目录。 */
     if (path === '/api/mc/config' && req.method === 'GET') {
-      const gate = await gateOf()
-      if (!gate.ok) return sendJson(res, 400, { ok: false, error: gate.error })
-      return ok(configView(gate.cwd))
+      const cwd = await cwdOf(null)
+      if (cwd) ensureMemoryRootForCwd(cwd)
+      return ok(configView(cwd))
     }
     if (path === '/api/mc/config' && req.method === 'PATCH') {
-      const gate = await gateOf(body)
-      if (!gate.ok) return sendJson(res, 400, { ok: false, error: gate.error })
-      // 全局键 → PluginConfig；三个提示词开关 → **本工作区**的 config.json
-      for (const k of ['commandWhitelist', 'allowAllCommands', 'expressMode', 'expressBase']) {
+      const cwd = await cwdOf(body)
+      if (cwd) ensureMemoryRootForCwd(cwd)
+      // 全局键 → PluginConfig（**无条件**）；三个提示词开关 → **本工作区**的 config.json（有工作区才写）
+      for (const k of ['commandWhitelist', 'allowAllCommands', 'expressEnabled', 'expressBase']) {
         if (body[k] !== undefined) pluginConfig.set(k, body[k])
       }
       const wsPatch = {}
       for (const k of ['injectWhaleCraftAgentsMd', 'injectWorkspaceAgentsMd', 'rulesFollowVersion']) {
         if (body[k] !== undefined) wsPatch[k] = body[k]
       }
-      if (Object.keys(wsPatch).length) wsCfgPatch(gate.cwd, wsPatch)
-      return ok(configView(gate.cwd))
+      if (cwd && Object.keys(wsPatch).length) wsCfgPatch(cwd, wsPatch)
+      return ok(configView(cwd))
     }
 
     /* ── 「MC设置 → 文件分享」：这个工作区的发布区现状 / 清除分享数据 ──────────────
@@ -1067,16 +1095,37 @@ export function apply(ctx, rawConfig) {
     }
 
     /* ── 提示词（「MC设置 → 提示词」页 = `.whale-craft/RULES.md`）：读 / 存 / 恢复默认 ──
-     * 🔴 它是**按会话工作区**的（`<工作区>/.whale-craft/RULES.md`），所以前端要带 sessionId。
-     * 🔴 没有选中工作区 → **拒绝**（用户 2026-09-16）；有工作区则顺带把文件备好（点开设置即建）。 */
+     * 🔴 它是**按会话工作区**的（`<工作区>/.whale-craft/RULES.md`）。
+     *   · GET  **可无工作区** —— 无则**只读**返回内置默认提示词（前端展示用，不建档）；
+     *   · PUT/DELETE **必须有工作区**（写入没地方放）。
+     * 有工作区则顺带把文件备好（点开设置即建）。 */
     if (path === '/api/mc/agents-md') {
-      const gate = await gateOf(body)
-      if (!gate.ok) return sendJson(res, 400, { ok: false, error: gate.error })
       const sessionId = String(body.sessionId ?? url?.searchParams?.get('sessionId') ?? '')
-      const cwd = gate.cwd
-      const promptDir = memoryRootFor(cwd)
-      const wsPath = join(workspaceRootFor(safeAgentById(sessionId)), 'AGENTS.md')
       if (req.method === 'GET') {
+        const cwd = await cwdOf(null)
+        if (!cwd) {
+          return ok({
+            text: DEFAULT_AGENTS_MD,
+            source: 'default',
+            path: null,
+            isDefault: true,
+            defaultText: DEFAULT_AGENTS_MD,
+            followVersion: false,
+            rulesVersion: null,
+            pluginVersion: PLUGIN_VERSION,
+            workspacePath: null,
+            workspaceExists: false,
+            rulesExists: false,
+            // 版本内置提示词（随版本发布、只读展示）——无工作区时也要能看到它说了什么
+            versionPrompt: { version: PLUGIN_VERSION, title: versionPromptTitle(PLUGIN_VERSION), text: versionPromptText() },
+            injection: null,
+            hasWorkspace: false,
+            readOnly: true,
+          })
+        }
+        ensureMemoryRootForCwd(cwd)
+        const promptDir = memoryRootFor(cwd)
+        const wsPath = join(workspaceRootFor(safeAgentById(sessionId)), 'AGENTS.md')
         const cur = readAgentsMd(promptDir)
         return ok({
           text: cur.text,
@@ -1090,10 +1139,20 @@ export function apply(ctx, rawConfig) {
           pluginVersion: PLUGIN_VERSION,
           workspacePath: wsPath,
           workspaceExists: existsSync(wsPath),
+          // 本提示词那个文件（RULES.md）在不在 —— 前端据此给名字加"缺失"样式
+          rulesExists: existsSync(cur.path),
+          // 版本内置提示词（顶层放一份，无工作区分支同构，省得前端分两路取）
+          versionPrompt: { version: PLUGIN_VERSION, title: versionPromptTitle(PLUGIN_VERSION), text: versionPromptText() },
           // 「提示词」页要能直接告诉用户"这几段到底会不会进模型"（省得靠猜）
           injection: promptInjectionStatus(safeAgentById(sessionId)),
+          hasWorkspace: true,
+          readOnly: false,
         })
       }
+      // PUT / DELETE：写入必须有工作区（顺带建档）
+      const gate = await gateOf(body)
+      if (!gate.ok) return sendJson(res, 400, { ok: false, error: gate.error })
+      const promptDir = memoryRootFor(gate.cwd)
       if (req.method === 'PUT') return ok({ ...writeAgentsMd(promptDir, body.text), source: 'custom' })
       if (req.method === 'DELETE') return ok({ ...resetAgentsMd(promptDir), source: 'default' })
     }
@@ -1339,8 +1398,8 @@ export function apply(ctx, rawConfig) {
         return
       }
       try {
-        if (pluginConfig.expressMode !== 'online') {
-          logLine('发布区：当前是「关闭」模式，不提供访问（/api/whale-craft/… 只在线模式下开）')
+        if (!pluginConfig.expressEnabled) {
+          logLine('发布区：当前「文件分享」是关闭的，不提供访问（/api/whale-craft/… 只在开启时开）')
           res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
           res.end('not found (sharing disabled)')
           return
@@ -2339,25 +2398,25 @@ export function apply(ctx, rawConfig) {
    * 只做一件事：把 `.whale-craft/.express/` 下的文件换成**给用户用的那一行**，
    * 剩下的 markdown 由 AI 自己拼（`![名](url)` / `[名](url)`）——不再往别的工具返回值里塞字段。
    *
-   * 🔴 **回什么由「文件分享」模式决定**（用户 2026-09-17 定，见 config.mjs `expressMode`）：
-   *   · off    关闭（默认）→ 恒回一句"文件分享已关闭…"，服务也不开（AI 只能把绝对路径告诉用户）；
-   *   · online 在线 → 回 `base + 相对路径` 的**完整 URL**，只有这个模式才开服务。
-   * 两种模式都仍然**只认发布区**（`.express/`）里的文件。
+   * 🔴 **回什么由「文件分享」开关决定**（用户 2026-09-17 定、2026-10-04 从模式改为开关，见 config.mjs `expressEnabled`）：
+   *   · 关（默认）→ 恒回一句"文件分享已关闭…"，服务也不开（AI 只能把绝对路径告诉用户）；
+   *   · 开 → 回 `base + 相对路径` 的**完整 URL**，只有开启时才开服务。
+   * 两种状态都仍然**只认发布区**（`.express/`）里的文件。
    */
   ctx.tools.register(asTool({
     name: 'mc_kit_express',
     description: '把**发布区**（`.whale-craft/.express/`）里的文件换成"给用户的东西"。\n'
       + '· 入参：`path` —— 发布区下的文件（工作区相对或绝对都行，**必须在 `.whale-craft/.express/` 下**）；\n'
-      + '· 返回**一行**，内容取决于用户在「MC设置 → 文件分享」里选的模式：\n'
+      + '· 返回**一行**，内容取决于用户在「MC设置 → 文件分享」里有没有开启分享：\n'
       + '  · 关闭（默认）：只回一句"文件分享已关闭…"——那就把文件的**绝对路径**告诉用户，让用户自己打开；\n'
-      + '  · 在线：回**完整 URL**——图片 `![图片名](url)`、其它文件 `[文件名](url)` 嵌进回复里；\n'
-      + '· 在线链接**原样使用**，不要再补 `http://…` 或域名。\n'
+      + '  · 开启：回**完整 URL**——图片 `![图片名](url)`、其它文件 `[文件名](url)` 嵌进回复里；\n'
+      + '· 链接**原样使用**，不要再补 `http://…` 或域名。\n'
       + '⚠️ 只有 `.whale-craft/.express/` 下的文件可分享；默认输出目录 `.whale-craft/.out/` **不对外**。',
     parameters: {
       path: { type: 'string', required: true, description: '发布区下的文件路径（工作区相对或绝对；必须在 .whale-craft/.express/ 下）' },
     },
     output: {
-      schema: { type: 'object', properties: { url: { type: 'string' }, mode: { type: 'string' } }, additionalProperties: true },
+      schema: { type: 'object', properties: { url: { type: 'string' }, enabled: { type: 'boolean' } }, additionalProperties: true },
       // **只把那一行给模型**（用户："输出纯路径，让 AI 自己拼接 md"）
       render: (_args, value) => [{ type: 'text', text: String(value?.url ?? '') }],
     },
@@ -2388,13 +2447,13 @@ export function apply(ctx, rawConfig) {
           + `请先把它放到 .whale-craft/${EXPRESS_DIR}/<子目录>/ 下（出图时把 out 写成那里，`
           + '或用 mc_kit_memory {action:"put", path:".express/<子目录>/x.png"} 复制过去），再来取。')
       }
-      const mode = pluginConfig.expressMode
+      const enabled = pluginConfig.expressEnabled
       // 关闭（默认）：恒回那一句（**不抛错** —— 让 AI 直接把话转达用户，而不是去试别的歪招）
-      if (mode !== 'online') return { mode, url: EXPRESS_OFF_TEXT, rel: ref.rel, abs: abs }
-      // 在线：base + 相对路径；base 还没配就把"让用户去设置"这句话交给 AI
+      if (!enabled) return { enabled: false, url: EXPRESS_OFF_TEXT, rel: ref.rel, abs: abs }
+      // 开启：base + 相对路径；base 还没配就把"让用户去设置"这句话交给 AI
       const url = onlineUrlOf(pluginConfig.expressBase, ref.url)
-      if (!url) return { mode, url: EXPRESS_NEED_BASE_TEXT, rel: ref.rel }
-      return { mode, url, rel: ref.rel }
+      if (!url) return { enabled: true, url: EXPRESS_NEED_BASE_TEXT, rel: ref.rel }
+      return { enabled: true, url, rel: ref.rel }
     },
   }))
 
@@ -3894,8 +3953,8 @@ export function apply(ctx, rawConfig) {
       + '可用键：`commandWhitelist`（字符串数组；支持 "tp" 精确名、"/^gi.*/" 正则、"*" 全放行）· '
       + '`mcModePresets`（哪些 preset 算 MC 模式——应含 MC+ 的 id）· `mcPlusPresets`（哪些算 MC+ 变体：'
       + '开放标准模式全部工具）· `mcMode.allowOtherTools`（MC 模式白名单里**额外**放行的工具）· '
-      + '`mcMode.hideAdminTools`（默认 true）· `expressMode`（文件分享：off 关闭 / online 在线）· '
-      + '`expressBase`（在线模式的 base，如 https://example.com）· `memoryDir`。\n'
+      + '`mcMode.hideAdminTools`（默认 true）· `expressEnabled`（文件分享开关：true 开 / false 关）· '
+      + '`expressBase`（文件分享的 base，如 https://example.com）· `memoryDir`。\n'
       + '改完**立即生效**，落在 `$DSH_HOME/whale_craft/config.json`。（白名单只能"收窄"，不能凭空添加 preset 没挂的工具。）',
     parameters: {
       action: { type: 'string', description: 'get（默认）/ set / unset / reset / list' },

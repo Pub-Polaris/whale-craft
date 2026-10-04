@@ -19,6 +19,7 @@ whale_craft 自身以 **MIT** 发布（见 `LICENSE`）。它**不打包**任何
 | --- | --- | --- |
 | `@deepseek-ai/dsh-tools` | MIT | 工具注册契约（`defineTool`）——由宿主提供，不随本包分发 |
 | `@deepseek-ai/schemastery` | MIT | 插件配置 schema——由宿主提供 |
+| `@deepseek-ai/dsh-client-ui-primitives` | MIT | 浏览器半端的 **DSH 官方图标集与控件**——由宿主**作为平台内置模块**提供（`require` 取得，不随本包分发）。本插件只用它的图标（如 `IconSettingsOutlineRegular`），与 DSH 原生 UI 同款 |
 
 ## 可选
 
