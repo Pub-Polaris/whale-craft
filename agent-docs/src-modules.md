@@ -1,6 +1,6 @@
 # src/ 模块参考
 
-> 快照：0.1.7。所有模块都是纯 ESM，**只有 config.mjs 引了 express.mjs 一处模块间依赖**，其余全部由 `index.js` 组装。
+> 快照：**0.2.0**（开发中，未发布）。所有模块都是纯 ESM，**只有 config.mjs 引了 express.mjs 一处模块间依赖**，其余全部由 `index.js` 组装。
 > 通用规矩：任何可能永不 settle 的 await 套 `withTimeout`/`raceAbort`；日志走 `logLine()`。
 
 ---

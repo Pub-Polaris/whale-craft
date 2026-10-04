@@ -1,6 +1,6 @@
 # 工具目录（29 个）
 
-> 快照：0.1.7。注册全部在 `index.js` 的 `apply()` 内（`ctx.tools.register(asTool({...}))`），
+> 快照：**0.2.0**（开发中，未发布）。注册全部在 `index.js` 的 `apply()` 内（`ctx.tools.register(asTool({...}))`），
 > 分三段：`mc_*`（游戏内，25）/ `mc_kit_*`（游戏外辅助，3）/ `mc_admin_*`（管理，1）。
 > 可见性按模式分档（2026-10-04）：**MC模式** 只见 mc/mckit + 文件工具；**MC+模式** 全量可见（含 admin）；
 > **其他模式** 隐藏 mc_* / mc_kit_*（仅保留 `mc_admin_*`），另有 guard 硬拒兜底。
