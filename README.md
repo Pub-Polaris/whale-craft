@@ -323,7 +323,7 @@ CI 跑的就是这两条（`.github/workflows/ci.yml`）：**ubuntu（Node 22 / 
   加 secret 的位置：仓库 **Settings → Secrets and variables → Actions → New repository secret**，
   名字必须是 `NPM_TOKEN`，值是 npm 的 Automation token。
 - 也可以**在本机手动发**（不依赖任何 secret）：`npm login` 后跑 `npm run publish:npm`
-  —— 前置校验、失败即停、默认要确认，细则见 `RELEASING.md`。
+  —— 前置校验、失败即停、默认要确认，细则见 `agent-docs/release.md`。
 - **每个版本改了什么**见 [`CHANGELOG.md`](CHANGELOG.md)（`0.1.7`：修 1.21/1.21.1 进服掉线、
   断线状态不同步、`mc_events` 的等待堵住唤醒；`0.1.6`：修皮肤站登录 400；`0.1.5`：修"连不存在的服
   把整个 DSH 搞崩"、`mc_lan` 只留局域网公告、新增 `mc_ping`、默认行事准则第五版）。

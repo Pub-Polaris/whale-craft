@@ -1,7 +1,8 @@
 # 发布流程
 
-> 快照：0.1.7（2026-10-02）。仓库根还有一份面向"人"的 `RELEASING.md`（更新、更细，含实测记录）；本文是给 agent 的摘要 + CI 行为细节。
-> ⚠️ 当前状态：main 比 `v0.1.7` tag **多 2 个未发版 commit**（GitHub issue #1 修复、`tools/dev.mjs` 新增）——下次发版需要先在 `CHANGELOG.md` 补节并升 `package.json` 版本。
+> 快照：0.1.7（2026-10-02）。本文是发版的**唯一权威文档**：给 agent 的摘要 + CI 行为细节 + 面向人的操作步骤与实测记录
+> （原仓库根 `RELEASING.md` 已并入本文）。
+> ⚠️ 当前状态：main 比 `v0.1.7` tag **多一批未发版 commit**（GitHub issue #1 修复、`tools/dev.mjs` 新增等）——下次发版需要先在 `CHANGELOG.md` 补节并升 `package.json` 版本。
 
 ## 0. 两条渠道，互不依赖
 
@@ -10,13 +11,22 @@
 | **GitHub Release** | 推 `v*` tag → CI 自动 | `whale_craft-<版本>.zip` + 正文取 CHANGELOG 本节 |
 | **npm** | ① CI（仓库配了 `NPM_TOKEN` 就自动发）② 或本机手动 `npm run publish:npm` | npm 包 `whale_craft@<版本>` |
 
+> 🔴 **2026-09-18 起 npm 步骤加回工作流了**（用户要求），但**是"先探再发"**：仓库
+> Settings → Secrets and variables → Actions 里有 `NPM_TOKEN` 才发；**没配就明确跳过并打一条 notice**，
+> 工作流照样绿 —— 不会再出现 2026-09-17 那种"token 失效 → 整条红叉、而发布其实早就成功"的情况。
+> 想完全不依赖 secret，就走 §6 在本机手动发。
+
 ## 1. 版本纪律（发版前必做）
 
 1. `package.json` 的 `version` 升到目标版本；
-2. `CHANGELOG.md` 加一节 `## [<版本>] - YYYY-MM-DD`（**Release 正文就是它**，写得像 0.1.7 那样：现象/根因/修法/验收）；
+2. `CHANGELOG.md` 加一节 `## [<版本>] - YYYY-MM-DD`（**Release 正文就是它**）。写**面向用户**的版本说明：现象 / 用户能看懂的根因 / 用户影响 / 不兼容变更。
+   **技术细节不进 CHANGELOG** —— 代码片段、上游源码的文件:行号、自检断言与计数、内部标识符、CI 明细、给维护者的教训，
+   一律写进 [`history.md`](history.md)（事故档案 + 设计决策）；CHANGELOG 是给终端用户读的；
 3. 提交、推 main；
 4. 打 tag 并推：
    ```bash
+   git commit -am "0.1.7：…"
+   git push
    git tag -a v0.1.7 -m "whale_craft 0.1.7"
    git push origin v0.1.7
    ```
@@ -29,24 +39,32 @@
 3. `npm pack` → 解包 → 打 **zip**（不是 .tgz）；
 4. 用 `.notes.cjs` 从 `CHANGELOG.md` 提取 `## [<版本>]` 那一节当 Release 正文（**不用 `--generate-notes`**，不用 diff）；
 5. `gh release create` 挂 zip；
-6. **npm "先探再发"**：探测仓库 secret `NPM_TOKEN` —— 有才发（发布前再查 `npm view <pkg>@<版本>` 防重复，已存在则跳过）；**没有就打一条 notice 跳过，工作流照样绿**（2026-09-17 的教训：token 失效让"整条红叉、而发布其实早就成功"）。
+6. **npm "先探再发"**：探测仓库 secret `NPM_TOKEN` —— 有才发（发布前再查 `npm view <pkg>@<版本>` 防重复，已存在则跳过）；
+   **没有就打一条 notice 跳过，工作流照样绿**（2026-09-17 的教训：token 失效让"整条红叉、而发布其实早就成功"）。
 
 ## 3. `ci.yml` 行为（push main / PR）
 
 - **check 矩阵**：ubuntu（Node 22 / 24）+ windows（Node 22）→ `npm ci` → `check-core` → `selfcheck`；
-- **package job**（全绿后）：`npm pack` 核对 tarball —— 必含 `package.json/index.js/client.js/selfcheck.mjs/cordis.patch.yml/LICENSE/README.md/tools/check-core.mjs`；**不得**混进 `node_modules/`、`logs/`、`accounts.json`、`config.json`、`.whale-craft`；上传 artifact。
+- **package job**（全绿后）：`npm pack` 核对 tarball —— 必含
+  `package.json/index.js/client.js/selfcheck.mjs/cordis.patch.yml/LICENSE/README.md/tools/check-core.mjs`；
+  **不得**混进 `node_modules/`、`logs/`、`accounts.json`、`config.json`、`.whale-craft`；上传 artifact。
 
-## 4. 改工作流文件本身的坑（实测）
+## 4. 落地 / 修工作流文件（一次性；workflow scope 坑）
 
-`.github/workflows/*` 的推送可能需要 token 有 **`workflow` scope**，而经代理通道推可能**明明有 scope 也被拒**（是通道问题不是 token 问题）。实测 **Contents API 可以**。所以：
+`.github/workflows/*` 的推送可能需要 token 有 **`workflow`** scope，而经代理通道推可能**明明有 scope 也被拒**
+（是通道问题，不是 token 问题）。**实测 Contents API 可以**（PUT `contents/.github/workflows/release.yml` 成功）。
+所以修好的模板放在 `scripts/release.workflow.yml`（**普通文件**，随代码分发）：
 
 ```bash
-# 修好的模板在 scripts/release.workflow.yml（普通文件随代码分发）
-node scripts/land-workflow-fix.mjs --dry    # 先看会改什么
+node scripts/land-workflow-fix.mjs --dry        # 先看会改什么
 GITHUB_TOKEN=<带 workflow scope 的 token> node scripts/land-workflow-fix.mjs
 ```
 
-`land-workflow-fix.mjs`：预检 token scopes → 优先 Contents API（GET 拿 sha → PUT base64）→ 失败回退 git push（报 workflow scope 错时提示改用 API）→ 回读校验（剥注释后确认远端没有 `npm publish` 之类预期外内容）。不想折腾 token：把模板内容**粘到网页上**的 `.github/workflows/release.yml`（网页编辑不需要 scope）。
+`land-workflow-fix.mjs`：预检 token scopes → 优先 Contents API（GET 拿 sha → PUT base64）→ 失败回退 git push
+（报 workflow scope 错时提示改用 API）→ 回读校验（剥注释后确认远端没有 `npm publish` 之类预期外内容）。
+
+不想折腾 token：把 `scripts/release.workflow.yml` 的内容**粘到网页上**的 `.github/workflows/release.yml`
+（网页编辑不需要 workflow scope）。
 
 ## 5. 本机手动发 npm（不依赖任何 CI secret）
 
@@ -67,6 +85,9 @@ node scripts/publish-npm.mjs --yes --otp 123456 --tag next
 6. `npm pack --dry-run` 清单里没有 `logs/`、`accounts.json`、`config.json`、`.whale-craft`；
 7. 提醒 GitHub 有没有对应 tag（只提醒，不拦）。
 
+发完脚本会打印 `https://www.npmjs.com/package/whale_craft/v/<版本>`。
+
+- **token 放哪**：首选 `npm login`（凭据进 `~/.npmrc`）；或环境变量 `NODE_AUTH_TOKEN`；写进本仓库 `.npmrc` 也行——**已在 `.gitignore` 里忽略**。
 - `publishConfig` 钉死 `registry: https://registry.npmjs.org/` + `access: public`（避免本机镜像 registry 把包发错地方）。
 - `prepublishOnly` = `npm run check`（**坏树发不出去**，即使不经脚本直接 `npm publish` 也拦得住）。
 - Windows 上脚本显式走 `cmd.exe /c`（不用 `shell:true`，防 DEP0190 与参数拆分）。
@@ -79,12 +100,13 @@ node scripts/publish-npm.mjs --yes --otp 123456 --tag next
 | `E404 Not Found - PUT https://registry.npmjs.org/…` | token 不能发布（过期/只读/非 Automation）→ 重新 `npm login` |
 | `npm whoami` 401 | token 没配好 |
 | tag 工作流红叉、报 `npm …` 失败 | 远端还是旧工作流 → §4 |
-| Release 正文是 `Full Changelog: …` / 附件是 `.tgz` | 同上，旧工作流 → §4 |
+| Release 正文是 `Full Changelog: …compare/…` / 附件是 `.tgz` | 同上，旧工作流 → §4 |
 | tag 校验失败 | tag 与 package.json 版本不一致（改 tag 或改版本重发） |
+| Release 正文/附件都对但没发 npm | 仓库没配 `NPM_TOKEN`（打 notice 跳过，属正常）→ 见 §5 本机手动发 |
 
 ## 7. DSH 版本范围声明（engines.dsh + peerDependencies，2026-10-02 起）
 
-`package.json` 明确声明支持的 DSH **运行时**范围：**`>=0.2.0-rc.1 <0.3.0`**，且三处保持一致（改一处漏两处，selfcheck 的 `DSH_RANGE` 断言会红）：
+`package.json` 明确声明支持的 DSH **运行时**范围：**`>=0.2.0-rc.2 <0.3.0`**，且三处保持一致（改一处漏两处，selfcheck 的 `DSH_RANGE` 断言会红）：
 
 | 位置 | 性质 |
 | --- | --- |

@@ -1,6 +1,8 @@
 # whale_craft 内部开发文档（agent-docs）
 
 > 面向接手本仓库的 AI agent 与开发者。**先读这一页**，再按需进入各专题。
+> 仓库根有一份 [`AGENTS.md`](../AGENTS.md) 作为引导入口（DSH 宿主会把根 `AGENTS.md` 当工作区指令自动注入），
+> 它只放"先读这里 + 最硬的几条铁律 + 验证命令"，完整地图与铁律速查以本页为准。
 > 快照：whale_craft **0.1.7**（main 比 `v0.1.7` tag 多一批未发版 commit：issue #1 修复、`tools/dev.mjs`、26.2 兼容层移除、DSH 版本范围、插件页本地化、**按工作区 config.json**），2026-10-03。
 > 本文档写"机制与不变式（为什么）"；**细节以代码为准**，文档负责给地图与避坑指引。
 
@@ -45,7 +47,7 @@ DSH（DeepSeek Harness）原生插件：把一台无头 Minecraft 机器人（mi
 | [src-modules.md](src-modules.md) | src/ 模块参考：导出、语义、不变式、坑 | 改某个模块时 |
 | [client-ui.md](client-ui.md) | 浏览器半端：插槽扩展点、**图标约定**、root vs 会话作用域 | 改 client.js / 加 UI 入口时 |
 | [dev-workflow.md](dev-workflow.md) | 本机环境硬约束、隔离铁律、自检、调试、升级敏感点 | **动手前必读** |
-| [release.md](release.md) | 发版流程（tag / CI / npm 手动发） | 发版时 |
+| [release.md](release.md) | 发版流程（tag / CI / npm 手动发）—— **发版唯一权威文档**（原根 `RELEASING.md` 已并入） | 发版时 |
 | [history.md](history.md) | 版本史、P0 事故档案、设计决策记录 | 想动"看起来奇怪"的代码前 |
 
 ## 铁律速查（都是违反过、吃过亏的）

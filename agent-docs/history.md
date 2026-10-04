@@ -15,7 +15,7 @@
 | 0.1.5 | 2026-09-18 | **P0：连不存在的服务器崩整个 DSH**；行事准则第五版（较长思考）；`mc_lan` 只留广播；新增 `mc_ping`；uncaughtException 通道收口 |
 | 0.1.6 | 2026-09-19 | 皮肤站登录 400（authenticate 补 Yggdrasil 必填 `agent` 字段） |
 | 0.1.7 | 2026-09-20 | 三修：断线状态不同步（三处撒谎）／`mc_events{waitSec}` 堵唤醒／1.21·1.21.1 进服秒踢（协议护栏）+ 幽灵在线 |
-| main 未发版 | 2026-09 末 / 10-03 | GitHub issue #1 五处修复（工具组探针静默失效等，版本无关）；`tools/dev.mjs` 调试工具链（`chore: 调试工具`）；26.2 按键上报兼容层整体移除（上游尚无 26.2 数据；详见 F10）；DSH 版本范围声明（engines.dsh + dsh peer）；**0.1 时代死配置/死代码清理**（Config 的 7+2 个无人读字段、`jsonSafe`、`connect` 旧字符串签名、`BUILTIN_AUTH_SERVERS` 别名、patch.yml 的 autoConnect 块）；**插件页中英本地化**（鲸鱼工艺 / Whale Craft + 描述；`locale/*.json` 逐文件 exports——模式写法踩过 `en.json.json` 静默坑）；**按工作区 settings→`config.json`**（提示词三开关从全局下放 + `.rules-version` 迁入删除 + 受保护文件统一"可读不可写"） |
+| main 未发版 | 2026-09 末 / 10-03 | GitHub issue #1 五处修复（工具组探针静默失效等，版本无关）；`tools/dev.mjs` 调试工具链（`chore: 调试工具`）；26.2 按键上报兼容层整体移除（上游尚无 26.2 数据；详见 F10）；DSH 版本范围声明（engines.dsh + dsh peer）；**0.1 时代死配置/死代码清理**（Config 的 7+2 个无人读字段、`jsonSafe`、`connect` 旧字符串签名、`BUILTIN_AUTH_SERVERS` 别名、patch.yml 的 autoConnect 块）；**插件页中英本地化**（鲸鱼工艺 / Whale Craft + 描述；`locale/*.json` 逐文件 exports——模式写法踩过 `en.json.json` 静默坑）；**按工作区 settings→`config.json`**（提示词三开关从全局下放 + `.rules-version` 迁入删除 + 受保护文件统一"可读不可写"）；**「MC+模式」+ MC模式转声明式 preset**；**issue #5「failed to import」**（见 F11）；**v4 会话 `source.kind` / 看门狗 job owner 修复**（见 F12） |
 
 ## 2. 事故档案（按主题）
 
@@ -81,6 +81,7 @@
 | F10 | 26.2 按键上报兼容层（`player_input`）整体移除（2026-10-02） | 上游还连不了 26.2——mineflayer 4.39.0 的 testedVersions 只到 26.1；minecraft-data 3.117.0 只收了 26.2 的**元数据**、没有数据目录（`minecraft-data('26.2')` 为 null）。插件里的该层属于不完整支持 → 代码 + 自检断言整体撤掉，留"已移除"护栏防残代码；将来上游就绪，按 CHANGELOG 0.1.7 的方案（先查后发）重建 |
 | F11 | 官方 dsh-desktop / 干净安装上插件 **`failed to import`**（issue #5，2026-10-04） | `index.js` 顶层**静态** import 两个 optional peer（`@deepseek-ai/dsh-tools`/`schemastery`）——包管理器永不装、desktop 上宿主包在 `app.asar` 里喂不进来 ⇒ 模块**链接期**失败（与 B1 的 dsh-llm 漏依赖同族，这次是"包在宿主里但插件解析不到"）。修法：两个包全部**可缺省**（`src/tool-def.mjs` 宿主优先/内置兜底；Config 拿不到 schemastery 就**不导出**、apply 自己兜默认值）。**本机 link 安装测不出来** ⇒ 新增"无宿主模拟"子进程自检 + CI 干净安装回归（已反证：改回静态 import 必红） |
 | F12 | v4 会话格式下**提示词注入/看门狗唤醒整轮失败** + 看门狗 job 挂不上（PR #2 @swan3146 的真机实验；2026-10-04 核实并修） | ① `source.kind` 写死 V3 包装值 `'plugin'`，**v4 准入点名拒绝**（规范值 `plugin:whale_craft`，宿主 `createUserMessage` 对 source 原样透传不修正）；② jobs 的 `owner`/`caller` 只认**会话 id 字符串**（`resolveOwner()` 拿它查 agents 注册表 `agents.get(session)`、`assertAccess()` 按 `job.owner.id === caller` 比对）——传 agent 对象 ⇒ job 挂不上（静默降级"无 job 模式"）、kill 被判"别人的 job"。两条都拿 desktop 0.2.0-rc.2 的 `app.asar` 逐字核对过（本机会话文件即 `session.v4.jsonl.zstd`）。修法：两处 source 改 v4 规范值；start/kill/list 全改传 `agent.id`，拿不到 id 不挂无主 job |
+| F13 | 部分 DSH 版本上**切不进 MC 模式**：`persona … invalid config: - $text missing required value`（0.1.3） | persona 的"人设正文"字段名**跨 DSH 版本变过**（老版 `text`、新版 `prefix`），而 `ensureMcPreset` 此前写死 `prefix`。修法：键名**跟着该部署自带的源 preset 走**（源用 `text` 就用 `text`），只替换正文值、绝不新增对方 schema 里没有的键；认不出结构就一行都不动并记日志。启动自检对**插件自建的** preset 做键名核对与自动修复（`MC_PRESET_SPEC` 升版会重建），手写/改过的那份一律不碰 |
 
 ## 3. 设计决策记录（"为什么这么设计"）
 
@@ -98,6 +99,8 @@
 | `mc_sequence` 上限 64 步 | 让模型做"连串动作"比让它写脚本稳；步数上限防失控 |
 | 事件队列与看门狗留档**分家** | `sess.events`（AI 拉）/`watchdog.log`（唤醒留档）语义不同；双写曾是 bug，"唯一写入方"写进注释与断言 |
 | 按工作区设置统一收进 `<工作区>/.whale-craft/config.json`（2026-10-03） | 提示词三开关原来存**全局**，而「MC设置」弹窗本身按工作区门控、RULES.md 也按工作区 —— 语义错位；版本标记原来是独立 `.rules-version` 文件。合并成一个文件后：保护语义统一为**可读不可写**（与 RULES.md 一致；散落的 `isAgentsMdPath`/PLUGIN_FILES 判定收编进 `src/protected.mjs`）、写入原子（tmp+rename）、坏文件只读不写、未知键保留；旧数据（`.rules-version`、全局旧值）在建档时一次性迁移，**写后回读校验通过才删**旧标记 |
+| 「MC模式」「MC+模式」改为包内**声明式 preset**（`presets/*.patch.yml`，经 `dsh.bundle.patch` **数组**挂载） | DSH 0.2.0-rc.2+ 有 preset 注册表：装好即出现在模式列表、用户可用 Web 编辑器按行 id 覆盖组成。工具暴露按 `mcModePresets`/`mcPlusPresets` 判**三档**（其他模式用 `restrict({deny})` 摘掉 `mc_*`/`mc_kit_*` + guard 硬拒双保险，`mc_admin_*` 保留）。旧宿主的目录式自举 `ensureMcPreset` 原样保留（新宿主上 `svc.copy` 不存在 → no-op） |
+| `mc_ping` **不用**上游 `mc.ping()`，自己走一遍包序 | 上游 `ping()` ① **不暴露 client**：想在超时时真掐掉连接就得覆盖 `options.connect`，而 `ping.js` 结尾正是 `options.connect(client)` —— 覆盖掉它 = 谁都不建 socket（四种场景全只能干等硬超时）；② 它的超时是 `closeTimeout`，默认 **120 秒**，对一次工具调用太长。改法：用同一套底层（`Client` + `states` + `tcpDns`）自己发握手 + `ping_start`，**超时与清理自控**（默认 5 秒、上限 30；无论成功/失败/超时都 `end()` + `destroy()`） |
 | 心跳默认**关**（300s） | 防睡死是可选需求；默认关省 token。开启才走心跳文案 |
 | 唤醒矩阵多数"被动"事件默认关（pushed/捡物/上下线） | 太频繁，只留档不唤醒（`mc_watch log` 可看） |
 | 超时守卫定时器**故意 unref/不 unref** | `withTimeout` 守卫**不 unref**（否则只剩它跑时进程提前退出）；observer timer 可 unref；`disconnect` 宽限计时器**不 unref**（要等完） |

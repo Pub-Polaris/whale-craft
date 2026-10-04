@@ -3803,7 +3803,9 @@ console.log('\n--- 依赖面 + 打包完整性（mineflayer 是**依赖**不是"
     // ⚠️ 断言前先剥掉 YAML 注释：模板注释里**故意**写了 "npm publish" / "--generate-notes"
     //    （说明为什么删掉它们），不剥就会被自己的注释骗到（2026-09-17 真踩：两条假红）。
     const tplCode = (tpl ?? '').split('\n').filter((l) => !/^\s*#/.test(l)).join('\n')
-    const releasing = (() => { try { return readFileSync(join(root, 'RELEASING.md'), 'utf8') } catch { return null } })()
+    // 发布流程文档已从 根 RELEASING.md 并入 agent-docs/release.md（根只留随包发布的文档）
+    const releasing = (() => { try { return readFileSync(join(root, 'agent-docs', 'release.md'), 'utf8') } catch { return null } })()
+    const rootAgents = (() => { try { return readFileSync(join(root, 'AGENTS.md'), 'utf8') } catch { return null } })()
     const toolChecks = [
       ['本机发 npm 的脚本在（带前置校验/确认/dry-run）', !!pub && /--dry/.test(pub) && /whoami/.test(pub) && /CHANGELOG\.md/.test(pub) && /npm publish/.test(pub)],
       ['脚本会在"版本已发过 / 树不干净 / token 不可用"时**停下**', /已经发布过了/.test(pub ?? '') && /工作树不干净/.test(pub ?? '') && /npm whoami 失败/.test(pub ?? '')],
@@ -3814,7 +3816,9 @@ console.log('\n--- 依赖面 + 打包完整性（mineflayer 是**依赖**不是"
       ['落地脚本会先校验 token 的 workflow scope、并回读确认', !!land && /x-oauth-scopes/.test(land) && /workflow/.test(land) && /npm publish/.test(land)],
       ['publishConfig 钉死官方 registry（防止发到镜像）', pkg.publishConfig?.registry === 'https://registry.npmjs.org/' && pkg.publishConfig?.access === 'public'],
       ['npm 脚本入口在（publish:npm / release:workflow-fix）', pkg.scripts?.['publish:npm'] === 'node scripts/publish-npm.mjs' && pkg.scripts?.['release:workflow-fix'] === 'node scripts/land-workflow-fix.mjs'],
-      ['RELEASING.md 写清两条渠道与红叉排障', !!releasing && /发 npm/.test(releasing) && /workflow.*scope/.test(releasing) && /Full Changelog/.test(releasing)],
+      ['发布流程文档（agent-docs/release.md）写清两条渠道与红叉排障', !!releasing && /发 npm/.test(releasing) && /workflow.*scope/.test(releasing) && /Full Changelog/.test(releasing)],
+      ['根 RELEASING.md 已并入 agent-docs/release.md（根不留非随包文档）', !existsSync(join(root, 'RELEASING.md'))],
+      ['根 AGENTS.md 指向 agent-docs/README.md（引导接手 agent 先读地图）', !!rootAgents && /agent-docs\/README\.md/.test(rootAgents)],
       ['.gitignore 挡住了 .npmrc 与 zip（token / 产物别提交）', (() => { try { const gi = readFileSync(join(root, '.gitignore'), 'utf8'); return /^\.npmrc$/m.test(gi) && /\*\.zip/.test(gi) } catch { return false } })()],
     ]
     for (const [label, passed] of toolChecks) console.log(`  ${passed ? '✅' : '❌'} ${label}`)
