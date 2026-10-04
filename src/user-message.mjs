@@ -15,6 +15,12 @@
  * 所以这里统一成一条路：**优先宿主实现，拿不到就用自带等价实现**（纯对象，字段逐个对齐
  * 宿主的 `createUserMessage`：`role` / `content` / `source` / `id`），
  * 让"能不能注入"与运行环境无关。解析失败会**记一行日志**（不再静默）。
+ *
+ * 🔴 2026-10-04：`source.kind` 必须是 **v4 规范值 `plugin:whale_craft`**——
+ *    v4 会话格式**拒绝**裸露的 `kind:'plugin'`（"format v4 message requires a producer-owned
+ *    source kind"），而且宿主 `createUserMessage` 对传进来的 source **原样透传**、不会帮我们修正。
+ *    规范形态 = 宿主 v3→v4 迁移的产出：`{ kind: 'plugin:<插件名>', form, summary }`（`plugin` 字段随之去掉）。
+ *    来源：issue #5 附带 PR #2（@swan3146）在真机上的实验 + 宿主 `dsh-session-format-v3-to-v4` 源码。
  * ============================================================================
  */
 import { createRequire } from 'node:module'
@@ -33,7 +39,7 @@ export const newMessageId = () => {
 export const builtinUserMessage = (input) => ({
   role: 'user',
   content: Array.isArray(input?.content) ? input.content : [],
-  source: input?.source ?? { kind: 'plugin' },
+  source: input?.source ?? { kind: 'plugin:whale_craft' },
   id: input?.id ?? newMessageId(),
 })
 

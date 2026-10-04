@@ -197,7 +197,8 @@ DSH host 进程
 6. `@deepseek-ai/dsh-llm` 的 `createUserMessage` 可用性（缺失时走自带兜底，但**依赖声明不能少**）。
 7. `sessionController.prompt` 是 @Remote（必传 signal）；`agent.steer` 在 step 边界的消费语义。
 8. `hosts`/`trustedHosts`、`webServer` 最长前缀路由。
-9. jobs 服务的 `owner` 语义（`stopSession` 只杀自己名下的）。
+9. jobs 服务的 `owner`/`caller` 语义：**只认会话 id 字符串**（`resolveOwner()` 拿它查 agents 注册表、`assertAccess()` 按 `job.owner.id === caller` 比对）；`stopSession` 只杀自己名下的（无主 job 对所有会话可见，别碰）。
+10. 会话消息 `source.kind`：**v4 格式拒绝裸露的 `'plugin'`**，规范值是 `plugin:<插件名>`（= 宿主 v3→v4 迁移的产出，`plugin` 字段随之去掉）；宿主 `createUserMessage` 对传进来的 source **原样透传**、不会替我们修正。
 
 ## 14. DSH 插件页（0.2.0+）：名称/描述 与 设置入口
 

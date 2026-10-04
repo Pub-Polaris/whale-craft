@@ -605,14 +605,15 @@ console.log('\n--- 强制停止：UI 路径的真实顺序（停LLM → 退游�
   //    `list(caller)` 的口径是 `owner === undefined || owner.id === session`，也就是说它
   //    **还会把"无主 job"（宿主自己起的后台任务）列出来**，而 `assertAccess()` 对无主 job 不设防。
   //    旧代码"列出来就全杀"⇒ 点一次「强制停止」会顺手清掉跟本会话无关的宿主任务。
+  const jobsCallers = []                 // 钉宿主契约：caller 必须是会话 id 字符串
   const jobs2 = {
-    list: () => [
+    list: (caller) => { jobsCallers.push(caller); return [
       { id: 'job-watch', ownerSession: 'sess-STOP' },        // 本会话：该杀
       { id: 'job-other', ownerSession: 'sess-STOP' },        // 本会话：该杀
       { id: 'job-host', ownerSession: undefined },           // 宿主自己的无主 job：**不许动**
       { id: 'job-other-sess', ownerSession: 'sess-OTHER' },  // 别的会话的 job：**不许动**
-    ],
-    kill: (id) => side.push(`kill:${id}`),
+    ] },
+    kill: (id, caller) => { jobsCallers.push(caller); side.push(`kill:${id}`) },
   }
   const sc2 = { cancel: ({ sessionId }) => side.push(`cancel:${sessionId}`) }
   const ctx2 = {
@@ -658,6 +659,9 @@ console.log('\n--- 强制停止：UI 路径的真实顺序（停LLM → 退游�
   console.log(`  ${!body.killedJobs?.includes('job-host') && !body.killedJobs?.includes('job-other-sess') ? '✅' : '❌'} 🔴 宿主无主 job / 别的会话的 job **一个都没动**（旧代码会把它们一起杀掉）`)
   const sideWant = ['cancel:sess-STOP', 'kill:job-watch', 'kill:job-other', 'cancel:sess-STOP']
   console.log(`  ${side.join(' → ') === sideWant.join(' → ') ? '✅' : '❌'} 副作用真实顺序 = 先停LLM → 清任务 → 再停LLM：${side.join(' → ')}`)
+  // 🔴 2026-10-04（PR #2 @swan3146）：caller 必须是**会话 id 字符串**——宿主 `list/kill/assertAccess`
+  //    都按 `job.owner.id === caller` 比对；传 agent 对象 ⇒ "自己的 job 一个都列不出来、也杀不掉"。
+  console.log(`  ${jobsCallers.length === 3 && jobsCallers.every((c) => c === 'sess-STOP') ? '✅' : '❌'} 🔴 list/kill 的 caller 都是**会话 id 字符串**（收到：${JSON.stringify(jobsCallers)}）`)
 
   // ── 「MC设置」HTTP 接口（锁住 E2E 抓到的真 bug：**DELETE 也带 body，必须读**）──
   // 🔴 2026-09-16：这组接口现在**必须有带工作区的 sessionId**（用户："没有选中工作区就拒绝设置"）。
@@ -1564,7 +1568,7 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     console.log(`  ${/runtimeContextSuppressed \? \[\]/.test(src) ? '✅' : '❌'} 状态块注释里钉住了宿主那段 contexts: runtimeContextSuppressed ? [] （这是根因）`)
     console.log(`  ${/notices: sent/.test(src) && /segments: \{/.test(src) ? '✅' : '❌'} 状态块报的是**实际投出去的文件**（noticesSent，不许再撒谎）`)
     // 🔴 用户："我不要模拟用户发送啊！" —— 投递的那条必须标成 plugin/notice，且**不许** steer（空闲时会起一轮）
-    console.log(`  ${/kind: 'plugin', plugin: 'whale_craft', form: 'notice'/.test(src) ? '✅' : '❌'} 投递的消息标成 plugin/notice（插件提示行，不归到用户头上）`)
+    console.log(`  ${/kind: 'plugin:whale_craft', form: 'notice'/.test(src) && !/kind: 'plugin',/.test(src) ? '✅' : '❌'} 投递的消息标成 plugin/notice —— kind 用 **v4 规范值** plugin:whale_craft（v4 拒绝裸露 'plugin'；不归到用户头上）`)
     console.log(`  ${!/agent\.steer\(/.test(src) ? '✅' : '❌'} 🔴 插件里**没有** steer 兜底（steer 空闲会"起一轮"＝没问就替用户说话）`)
   }
 
@@ -1925,15 +1929,15 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     console.log(`  ${mcAgent.inbox.nextStep.length === 0 ? '✅' : '❌'} 🔴 会话建立时**不预投**（队列 ${mcAgent.inbox.nextStep.length} 条）—— 模式在首次请求前还能改，预投就会串模式`)
     console.log(`  ${preStepHandlers().length === 1 ? '✅' : '❌'} 挂上了 agent/pre-step（宿主那条"消息已领走 + 系统提示已装好"的瀑布）`)
     const step1 = await preStepMessages(mcAgent)
-    const msgs = step1.filter((m) => String(m?.source?.plugin ?? '') === 'whale_craft')
-    const queuedAfterStep1 = mcAgent.inbox.nextStep.filter((m) => String(m?.source?.plugin ?? '') === 'whale_craft').length
+    const msgs = step1.filter((m) => String(m?.source?.kind ?? '') === 'plugin:whale_craft')
+    const queuedAfterStep1 = mcAgent.inbox.nextStep.filter((m) => String(m?.source?.kind ?? '') === 'plugin:whale_craft').length
     const first = msgs[0]
     const second = msgs[1]
     const third = msgs[2]
     console.log(`  ${msgs.length === 3 ? '✅' : '❌'} 🔴 首次请求组装前投递 3 条（${msgs.length} 条：行事准则 + 版本提示 + 记忆索引）`)
     console.log(`  ${msgs.length === 3 && first === step1[0] ? '✅' : '❌'} 提示行排在本 step 消息的**最前面**（模型先看到规矩，再看用户那句）`)
     console.log(`  ${msgs.length === 3 && queuedAfterStep1 === 0 ? '✅' : '❌'} 🔴 提示行是**本步改写**送出去的（没有走"塞队列、下一步才领"那条晚一步的老路；队列残留 ${queuedAfterStep1} 条）`)
-    console.log(`  ${first?.source?.kind === 'plugin' && first?.source?.plugin === 'whale_craft' && first?.source?.form === 'notice' ? '✅' : '❌'} 🔴 来源是 plugin/notice（**不是**用户发言）：${JSON.stringify(first?.source ?? null)}`)
+    console.log(`  ${first?.source?.kind === 'plugin:whale_craft' && first?.source?.plugin === undefined && first?.source?.form === 'notice' ? '✅' : '❌'} 🔴 来源是 plugin:whale_craft/notice（**不是**用户发言；v4 规范形态不带旧 plugin 字段）：${JSON.stringify(first?.source ?? null)}`)
     const body = (first?.content ?? []).map((c) => c.text ?? '').join('')
     console.log(`  ${/Whale Craft 行事准则/.test(body) && /Minecraft/.test(body) ? '✅' : '❌'} 第 1 条 = 行事准则（${body.length} 字），首行写明文件：${JSON.stringify(body.split('\n')[0])}`)
     console.log(`  ${/^Instructions from: \.whale-craft\/RULES\.md$/.test(body.split('\n')[0] ?? '') ? '✅' : '❌'} 正文首行是 "Instructions from: .whale-craft/RULES.md"（与 DSH 原生同形状）`)
@@ -1957,7 +1961,7 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     console.log(`  ${/长期记忆/.test(body2) && /mc_kit_memory/.test(body2) ? '✅' : '❌'} 记忆索引正文含"怎么记/怎么读"（${body2.length} 字）—— 不需要再单独往系统提示里塞一段`)
     console.log(`  ${plainAgent.inbox.nextStep.length === 0 ? '✅' : '❌'} 普通会话**不投递**（只有 MC 模式才投）`)
     const plainStep = await preStepMessages(plainAgent)
-    console.log(`  ${plainStep.filter((m) => m?.source?.plugin === 'whale_craft').length === 0 ? '✅' : '❌'} 🔴 普通会话**走到请求组装前**也一条都不投（现场判 preset，不靠"当时是 MC 就永久算数"）`)
+    console.log(`  ${plainStep.filter((m) => m?.source?.kind === 'plugin:whale_craft').length === 0 ? '✅' : '❌'} 🔴 普通会话**走到请求组装前**也一条都不投（现场判 preset，不靠"当时是 MC 就永久算数"）`)
     const inboxBefore = mcAgent.inbox.nextStep.length
     fire('agent/session-start', mcAgent)
     console.log(`  ${mcAgent.inbox.nextStep.length === inboxBefore ? '✅' : '❌'} agent/session-start 不再重复入队（投递已不在这个时机）`)
@@ -1986,11 +1990,11 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
   {
     // 第 1 步已经把它们与用户那句**同批**送出去了（上面 step1 那几条断言）；
     // 这一步验证"之后不再重复投"。
-    const consumed = (await preStepMessages(mcAgent, 2, 1)).filter((m) => m?.source?.plugin === 'whale_craft')
+    const consumed = (await preStepMessages(mcAgent, 2, 1)).filter((m) => m?.source?.kind === 'plugin:whale_craft')
     console.log(`  ${consumed.length === 0 ? '✅' : '❌'} 🔴 第 2 轮**不再重复投递**（实际 ${consumed.length} 条）—— 按 preset 记账生效`)
-    const again2 = (await preStepMessages(mcAgent, 2, 2)).filter((m) => m?.source?.plugin === 'whale_craft')
+    const again2 = (await preStepMessages(mcAgent, 2, 2)).filter((m) => m?.source?.kind === 'plugin:whale_craft')
     console.log(`  ${again2.length === 0 ? '✅' : '❌'} 同一轮的第 2 个 step 也不重复投（工具循环里不会刷屏）`)
-    const queueLeft = mcAgent.inbox.nextStep.filter((m) => m?.source?.plugin === 'whale_craft').length
+    const queueLeft = mcAgent.inbox.nextStep.filter((m) => m?.source?.kind === 'plugin:whale_craft').length
     console.log(`  ${queueLeft === 0 ? '✅' : '❌'} 🔴 队列里**不留**我们的提示行（不留 = 不会晚一步再送一遍，也不会串到别的模式）`)
   }
 
@@ -2012,7 +2016,7 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
   eventHandlers.filter((h) => h.ev === 'agent-preset/selected').forEach((h) => h.fn('sess-LATE', 'minecraft'))
   console.log(`  ${lateAgent.inbox.nextStep.length === 0 ? '✅' : '❌'} 🔴 切模式那一刻**不投**（此时用户可能又切走；投递点搬到请求组装前）`)
   const lateStep = await preStepMessages(lateAgent)
-  const lateMsgs = lateStep.filter((m) => m?.source?.plugin === 'whale_craft')
+  const lateMsgs = lateStep.filter((m) => m?.source?.kind === 'plugin:whale_craft')
   const lateBody = (lateMsgs[0]?.content ?? []).map((c) => c.text ?? '').join('')
   console.log(`  ${/Whale Craft 行事准则/.test(lateBody) ? '✅' : '❌'} 🔴 模式晚选上后，**首次请求组装前**照样投得到（${lateMsgs.length} 条 / ${lateBody.length} 字）—— 就是那个 bug`)
   console.log(`  ${lateMsgs.length === 3 ? '✅' : '❌'} 补投递没有重复（行事准则 + 版本提示 + 记忆索引，各一条）`)
@@ -2037,17 +2041,17 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     switchTo('standard')
     console.log(`  ${restrictReleased.length === releasedBefore + 1 && restrictReleased.at(-1) === applied ? '✅' : '❌'} 🔴 切回普通模式**撤销**了工具白名单（pwsh/命令工具回来了）`)
     console.log(`  ${lateAgent.inbox.nextStep.length === 0 ? '✅' : '❌'} 🔴 切回普通模式后队列里没有我们的提示词（${lateAgent.inbox.nextStep.length} 条）`)
-    const afterSwitchOut = (await preStepMessages(lateAgent, 3, 1)).filter((m) => m?.source?.plugin === 'whale_craft')
+    const afterSwitchOut = (await preStepMessages(lateAgent, 3, 1)).filter((m) => m?.source?.kind === 'plugin:whale_craft')
     console.log(`  ${afterSwitchOut.length === 0 ? '✅' : '❌'} 🔴🔴 切回普通模式后**走到请求组装前也一条都不投**（${afterSwitchOut.length} 条）—— "标准模式里冒出 MC 提示词"从根上不可能`)
     const callsBefore = restrictCalls.length
     switchTo('minecraft')
     const reapplied = restrictCalls.at(-1)
     console.log(`  ${restrictCalls.length === callsBefore + 1 ? '✅' : '❌'} 再切回 MC模式 重新套上白名单（撤销 ≠ 以后不再管）：allow ${reapplied?.f?.allow?.length ?? 0} 个`)
     console.log(`  ${Array.isArray(reapplied?.f?.allow) && !reapplied.f.allow.includes('pwsh') ? '✅' : '❌'} 重新套上的仍然是白名单（没有 pwsh）`)
-    const backToMc = (await preStepMessages(lateAgent, 4, 1)).filter((m) => m?.source?.plugin === 'whale_craft')
+    const backToMc = (await preStepMessages(lateAgent, 4, 1)).filter((m) => m?.source?.kind === 'plugin:whale_craft')
     console.log(`  ${backToMc.length === 3 ? '✅' : '❌'} 再切回 MC模式 后**请求前重新投递**提示词（实际 ${backToMc.length} 条；队列里那批已被切出时清掉，所以必须重投）`)
     await preStepMessages(lateAgent, 5, 1)                                    // 宿主领走
-    const backToMcAgain = (await preStepMessages(lateAgent, 6, 1)).filter((m) => m?.source?.plugin === 'whale_craft')
+    const backToMcAgain = (await preStepMessages(lateAgent, 6, 1)).filter((m) => m?.source?.kind === 'plugin:whale_craft')
     console.log(`  ${backToMcAgain.length === 0 ? '✅' : '❌'} 重投之后又是幂等的（第 6 轮 ${backToMcAgain.length} 条，没刷屏）`)
     switchTo('standard')                                 // 收尾：留成普通模式
     console.log(`  ${restrictReleased.at(-1) === reapplied ? '✅' : '❌'} 套用与撤销一一对应（每次套的都撤掉了）`)
@@ -2058,7 +2062,7 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     const deliverAgent = { id: 'sess-DELIVERED', session: mkSession('whale-dlv-'), ctx: makeAgentCtx('minecraft'), inbox: mkInbox() }
     fakeCtx.agents = { get: (id) => (id === 'sess-DELIVERED' ? deliverAgent : id === 'sess-LATE' ? lateAgent : undefined) }
     fire('agent/created', deliverAgent)
-    const firstRound = (await preStepMessages(deliverAgent, 1, 1)).filter((m) => m?.source?.plugin === 'whale_craft')
+    const firstRound = (await preStepMessages(deliverAgent, 1, 1)).filter((m) => m?.source?.kind === 'plugin:whale_craft')
     console.log(`  ${firstRound.length === 3 ? '✅' : '❌'} （前置）首次请求投了 3 条（实际 ${firstRound.length}）`)
     // 宿主把队列领走 → 这 3 条进了**会话日志**（之后台账丢掉也不该重投）
     await preStepMessages(deliverAgent, 2, 1)
@@ -2071,7 +2075,7 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     }
     fakeCtx.agents = { get: (id) => (id === 'sess-DELIVERED' ? reborn : undefined) }
     fire('agent/created', reborn)
-    const afterRestart = (await preStepMessages(reborn, 1, 1)).filter((m) => m?.source?.plugin === 'whale_craft')
+    const afterRestart = (await preStepMessages(reborn, 1, 1)).filter((m) => m?.source?.kind === 'plugin:whale_craft')
     console.log(`  ${afterRestart.length === 0 ? '✅' : '❌'} 🔴 进程重启后**不重复投递**（回读会话日志认出已投过；实际 ${afterRestart.length} 条）`)
     // 静态防回归：撤销路径的三块拼图必须在源码里（谁删了这里就红）
     const srcIdx = (await import('node:fs')).readFileSync(new URL('./index.js', import.meta.url), 'utf8')
@@ -2125,13 +2129,13 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
       { action: 'append', topic: 'selftest-tmp', server: '_global', text: '这是一条自检临时记忆' }, A)
     const idxAgent = { id: 'sess-IDX', session: mkSession('whale-idx-'), ctx: makeAgentCtx('minecraft'), inbox: mkInbox() }
     fire('agent/created', idxAgent)
-    const idxBody = (await preStepMessages(idxAgent)).filter((m) => m?.source?.plugin === 'whale_craft')
+    const idxBody = (await preStepMessages(idxAgent)).filter((m) => m?.source?.kind === 'plugin:whale_craft')
       .map((m) => (m.content ?? []).map((c) => c.text ?? '').join('')).join('\n')
     console.log(`  ${idxBody.includes('selftest-tmp') && /先读/.test(idxBody) ? '✅' : '❌'} 写进记忆后，新会话的提示行立刻带上该文件 + "先读"提醒`)
     await tools.get('mc_kit_memory').execute({ action: 'delete', path: String(mm.path) }, A)
     const idxAgent2 = { id: 'sess-IDX2', session: mkSession('whale-idx2-'), ctx: makeAgentCtx('minecraft'), inbox: mkInbox() }
     fire('agent/created', idxAgent2)
-    const idxBody2 = (await preStepMessages(idxAgent2)).filter((m) => m?.source?.plugin === 'whale_craft')
+    const idxBody2 = (await preStepMessages(idxAgent2)).filter((m) => m?.source?.kind === 'plugin:whale_craft')
       .map((m) => (m.content ?? []).map((c) => c.text ?? '').join('')).join('\n')
     console.log(`  ${!idxBody2.includes('selftest-tmp') ? '✅' : '❌'} 删掉后不再出现（索引是投递那一刻现读的，不是缓存）`)
   }
@@ -2170,7 +2174,7 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     unlinkSync(wsAgents)
     const seedAgent2 = { id: 'sess-SEED2', session: mkSession2(ws), ctx: makeAgentCtx('minecraft'), inbox: mkInbox() }
     fire('agent/created', seedAgent2)
-    const rebuiltBody = ((await preStepMessages(seedAgent2)).filter((m) => m?.source?.plugin === 'whale_craft')[0]?.content ?? [])
+    const rebuiltBody = ((await preStepMessages(seedAgent2)).filter((m) => m?.source?.kind === 'plugin:whale_craft')[0]?.content ?? [])
       .map((c) => c.text ?? '').join('')
     console.log(`  ${existsSync(wsAgents) ? '✅' : '❌'} 投递时发现文件不在 → **重建**了文件`)
     console.log(`  ${/Whale Craft 行事准则/.test(rebuiltBody) ? '✅' : '❌'} 同时投递默认全文（${rebuiltBody.length} 字）—— 不允许"要求注入却什么都没有"`)
@@ -2935,13 +2939,15 @@ console.log('\n--- 看门狗 job 结算 ---')
   const { Watchdog } = await import('./src/watchdog.mjs')
   const { EventEmitter } = await import('node:events')
   let hooks = null
+  let startSpec = null
   const kills = []
+  const killCallers = []
   const wdCtx = {
     logger: { info: () => {}, warn: () => {} },
     get: (k) => (k === 'jobs'
       ? {
-          start: (spec) => { hooks = spec.run(); return 'job-1' },
-          kill: (id) => { kills.push(id) },
+          start: (spec) => { startSpec = spec; hooks = spec.run(); return 'job-1' },
+          kill: (id, caller) => { killCallers.push(caller); kills.push(id) },
         }
       : undefined),
   }
@@ -2955,6 +2961,10 @@ console.log('\n--- 看门狗 job 结算 ---')
   const wd = mk()
   wd.arm()
   console.log(`  ${hooks ? '✅' : '❌'} job 已挂上（${wd.jobId}）`)
+  // 🔴 2026-10-04（PR #2 @swan3146）：owner 必须是**会话 id 字符串**。宿主 `resolveOwner()`
+  //    拿它查 agents 注册表（`agents.get(session)`，按 id 索引）——传 agent 对象必炸
+  //    `session "[object Object]" has no live agent`，job 挂不上、静默降级成"无 job 模式"。
+  console.log(`  ${typeof startSpec?.owner === 'string' && startSpec.owner === 's' ? '✅' : '❌'} 🔴 start 的 owner 是会话 id 字符串（收到：${JSON.stringify(startSpec?.owner)}）`)
 
   // 宿主 kill job → 我们的 cancel → 必须结算 done，且不回头再 kill 自己
   let settled = null
@@ -2993,6 +3003,17 @@ console.log('\n--- 看门狗 job 结算 ---')
   let threw = null
   try { wd3.disarm('没在跑也要能调') } catch (e) { threw = e }
   console.log(`  ${!threw ? '✅' : '❌'} 未启动时 disarm 幂等不抛错`)
+
+  // 🔴 2026-10-04（PR #2 @swan3146）：kill 的 caller 也必须是会话 id 字符串
+  //    （宿主 `assertAccess`：`job.owner.id !== caller → throw "belongs to another session"`）。
+  console.log(`  ${killCallers.every((c) => c === 's') && killCallers.length > 0 ? '✅' : '❌'} 🔴 kill 的 caller 是会话 id 字符串（收到：${JSON.stringify(killCallers)}）`)
+
+  // 🔴 拿不到会话 id → **不许挂"无主 job"**（无主 job 对**所有会话**可见）：降级 + 留档
+  const wdNoId = new Watchdog({ ctx: wdCtx, sess: { bot: new EventEmitter(), events: [], config: {} }, onFire: () => {} })
+  wdNoId.arm()
+  const degraded = wdNoId.jobId === null && (wdNoId.log ?? []).some((e) => /拿不到会话 id/.test(e.text))
+  console.log(`  ${degraded ? '✅' : '❌'} 拿不到会话 id：不挂无主 job（降级 + 留档）`)
+  wdNoId.disarm('自检结束')
 }
 
 // ── 结构不变量：会话事件队列只能有一个写入方 ──
@@ -3174,9 +3195,9 @@ console.log('\n--- 看门狗唤醒投递（提示词注入，非用户消息）-
   const msg = steerCalls[0]
   console.log(`  ${steerCalls.length === 1 ? '✅' : '❌'} 走 agent.steer（${steerCalls.length} 次）`)
   console.log(`  ${promptCalls.length === 0 ? '✅' : '❌'} **没有**走 sessionController.prompt/followup（${promptCalls.length} 次）`)
-  console.log(`  ${msg?.source?.kind === 'plugin' ? '✅' : '❌'} 来源是 plugin（不是 user）：kind=${msg?.source?.kind}`)
+  console.log(`  ${msg?.source?.kind === 'plugin:whale_craft' ? '✅' : '❌'} 来源是 plugin:whale_craft（不是 user）：kind=${msg?.source?.kind}`)
   console.log(`  ${msg?.source?.form === 'notice' ? '✅' : '❌'} form=notice（渲染成折叠摘要行）`)
-  console.log(`  ${msg?.source?.plugin === 'whale_craft' ? '✅' : '❌'} 标了来源插件 whale_craft`)
+  console.log(`  ${msg?.source?.kind === 'plugin:whale_craft' && msg?.source?.plugin === undefined ? '✅' : '❌'} kind 是 v4 规范值（且不带旧 plugin 字段）`)
   console.log(`  ${/deepseek/.test(msg?.content?.[0]?.text ?? '') ? '✅' : '❌'} 正文带上原始消息`)
   console.log(`  ${/MC 看门狗/.test(String(msg?.source?.summary ?? '')) ? '✅' : '❌'} 有单行摘要`)
   console.log(`  ${typeof msg?.id === 'string' && msg.id.length > 8 ? '✅' : '❌'} 是合法的 UserMessage（有 id）`)

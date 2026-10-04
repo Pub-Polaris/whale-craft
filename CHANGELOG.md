@@ -22,6 +22,29 @@
 - **CI**：新增干净环境回归 `tools/check-standalone-import.mjs`（`npm pack` → 独立目录 `npm install`
   → `import('whale_craft')` 必须成功）——把 `index.js` 改回静态 import 时这一步会变红（已反证）。
 
+### 🔴 修复（v4 会话格式上提示词注入 / 看门狗唤醒**整轮失败**：`source.kind` 用了被拒绝的旧值）
+
+- **现象**（PR #2 作者 @swan3146 的真机实验；我们核对 desktop 0.2.0-rc.2 的
+  `dsh-session-format-v3-to-v4` 源码确认）：在 **v4 会话格式**的宿主上投递提示行会报
+  `format v4 message requires a producer-owned source kind`，**整个回合失败**。
+- **根因**：`source.kind` 写死 V3 包装值 `'plugin'`——v4 准入**点名拒绝**它，
+  且宿主 `createUserMessage` 对传进来的 source **原样透传**、不会替我们修正。
+- **修法**：两处投递点（提示行 / 看门狗唤醒）改用 **v4 规范值 `plugin:whale_craft`**
+  （= 宿主 v3→v4 迁移的产出形态，`plugin` 字段随之去掉）；会话日志回读判据（`isOurNotice`）同口径。
+- **自检**：相关断言全部改为钉规范值（含"不带旧 `plugin` 字段"）。
+
+### 🔴 修复（看门狗后台 job 挂不上 + 「强制停止」清不掉自己的 job：`owner`/`caller` 传了 agent 对象）
+
+- **现象**（同 PR #2；核对 desktop 0.2.0-rc.2 的 `dsh-jobs-local` 源码确认）：
+  `挂 job 失败（降级为无 job 模式）：session "[object Object]" has no live agent` ——
+  MC 模式下看门狗一直以"无 job 模式"跑（job_list 看不到、强制停止也管不到它）。
+- **根因**：宿主的 `owner`/`caller` 要的是**会话 id 字符串**
+  （`resolveOwner()` 拿它查 agents 注册表；`assertAccess()` 按 `job.owner.id === caller` 比对）；
+  我们三处都传了 agent 对象 ⇒ job 挂不上、kill 被判成"别人的 job"而失败。
+- **修法**：`watchdog`（start / kill）与 `index.js` 强制停止的 `list` / `kill` 全部改传会话 id；
+  拿不到 id 时**不挂"无主 job"**（无主 job 对**所有会话**可见），降级并记日志。
+- **自检**：新增断言钉住 owner/caller 必须是字符串、无 id 不挂无主 job。
+
 ## [0.1.7] - 2026-09-20
 
 > 这一版在 0.1.6 之上修了三个**真机问题**（都是用户/其他使用者实测报上来的），并订正了几处"状态在撒谎"。

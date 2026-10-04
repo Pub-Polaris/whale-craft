@@ -80,12 +80,13 @@
 | F9 | `mc_kit_share` 被删（2026-09-16） | 它只是在调宿主**另装**的 `dsh-file-host`，不是插件自己的实现；"让用户看到文件"改走宿主 `present` + 本插件 `mc_kit_express`。自检留了"已移除 / 无文件服务器残留"断言防回归 |
 | F10 | 26.2 按键上报兼容层（`player_input`）整体移除（2026-10-02） | 上游还连不了 26.2——mineflayer 4.39.0 的 testedVersions 只到 26.1；minecraft-data 3.117.0 只收了 26.2 的**元数据**、没有数据目录（`minecraft-data('26.2')` 为 null）。插件里的该层属于不完整支持 → 代码 + 自检断言整体撤掉，留"已移除"护栏防残代码；将来上游就绪，按 CHANGELOG 0.1.7 的方案（先查后发）重建 |
 | F11 | 官方 dsh-desktop / 干净安装上插件 **`failed to import`**（issue #5，2026-10-04） | `index.js` 顶层**静态** import 两个 optional peer（`@deepseek-ai/dsh-tools`/`schemastery`）——包管理器永不装、desktop 上宿主包在 `app.asar` 里喂不进来 ⇒ 模块**链接期**失败（与 B1 的 dsh-llm 漏依赖同族，这次是"包在宿主里但插件解析不到"）。修法：两个包全部**可缺省**（`src/tool-def.mjs` 宿主优先/内置兜底；Config 拿不到 schemastery 就**不导出**、apply 自己兜默认值）。**本机 link 安装测不出来** ⇒ 新增"无宿主模拟"子进程自检 + CI 干净安装回归（已反证：改回静态 import 必红） |
+| F12 | v4 会话格式下**提示词注入/看门狗唤醒整轮失败** + 看门狗 job 挂不上（PR #2 @swan3146 的真机实验；2026-10-04 核实并修） | ① `source.kind` 写死 V3 包装值 `'plugin'`，**v4 准入点名拒绝**（规范值 `plugin:whale_craft`，宿主 `createUserMessage` 对 source 原样透传不修正）；② jobs 的 `owner`/`caller` 只认**会话 id 字符串**（`resolveOwner()` 拿它查 agents 注册表 `agents.get(session)`、`assertAccess()` 按 `job.owner.id === caller` 比对）——传 agent 对象 ⇒ job 挂不上（静默降级"无 job 模式"）、kill 被判"别人的 job"。两条都拿 desktop 0.2.0-rc.2 的 `app.asar` 逐字核对过（本机会话文件即 `session.v4.jsonl.zstd`）。修法：两处 source 改 v4 规范值；start/kill/list 全改传 `agent.id`，拿不到 id 不挂无主 job |
 
 ## 3. 设计决策记录（"为什么这么设计"）
 
 | 决策 | 理由 |
 | --- | --- |
-| 事件唤醒只走 `mc_watch` **一条通道**、注入是"插件提示行" | 用户明确要求：**提示词注入，不模拟用户发言**。`source:{kind:'plugin',form:'notice'}` 被宿主渲染成折叠一行；`agent.followup`/queue 类通道写死 `{kind:'user'}`，禁用 |
+| 事件唤醒只走 `mc_watch` **一条通道**、注入是"插件提示行" | 用户明确要求：**提示词注入，不模拟用户发言**。`source:{kind:'plugin:whale_craft',form:'notice'}`（v4 规范值）被宿主渲染成折叠一行；`agent.followup`/queue 类通道写死 `{kind:'user'}`，禁用 |
 | 看门狗挂宿主 **job**（`kind:'mc-watch'`，整局存活） | 宿主任务条可见、可被"强制停止"；宿主 kill job → `cancel` → disarm 兜底 teardown，不会留孤儿 |
 | 行事准则叫 `RULES.md` 而不是 `AGENTS.md` | 避开宿主对 `AGENTS.md`/`CLAUDE.md` 的自动注入（不受插件开关控制）；改名后注入只剩插件一条、且只对 MC 模式生效 |
 | **连接参数全在 `mc_connect` 工具里**，Config 只留行为配置 | AI 按用户指令/记忆决定连哪；Config 无凭据可泄露；旧字段保留为 deprecated fallback |

@@ -776,17 +776,20 @@ export function apply(ctx, rawConfig) {
     //    而 `assertAccess()` 是 `if (job.owner !== undefined && ...) throw`，**对无主 job 不设防**。
     //    照旧代码那样"列出来就全杀"，点一次「强制停止」会顺手清掉跟这个会话毫无关系的宿主任务。
     //    （同一个坑 PR #2 的作者也报过，见 <user>/whale-craft#2。）
+    //    🔴 2026-10-04（同 PR #2）：`caller` 必须是**会话 id 字符串**——`list(caller)` 内部
+    //    按 `job.owner.id === caller` 过滤、`kill(id, caller)` 的 `assertAccess` 也一样；
+    //    传 agent 对象时"自己的 job 一个都列不出来、也杀不掉"（还会把无主 job 列出来）。
     //    判据用**快照里带的 owner 身份**，两种宿主版本的字段名都认：
     //    `ownerSession`（本版）/ `owner`（0.1.7 起）。
     const jobs = ctx.get('jobs')
     if (jobs && typeof sessionId === 'string' && sessionId) {
       try {
-        for (const j of jobs.list(agent) ?? []) {
+        for (const j of jobs.list(sessionId) ?? []) {
           const id = j?.id ?? j?.jobId
           if (!id) continue
           const ownerOf = j?.ownerSession ?? j?.owner
           if (ownerOf !== sessionId) continue          // 无主 job / 别人的 job：不归我们管
-          try { jobs.kill(id, agent, reason); out.killedJobs.push(id) } catch {}
+          try { jobs.kill(id, sessionId, reason); out.killedJobs.push(id) } catch {}
         }
       } catch (e) { out.jobsError = String(e?.message ?? e) }
     }
@@ -2559,7 +2562,7 @@ export function apply(ctx, rawConfig) {
    *    · 两个都开时**先投工作区的，再投我们自己的**；
    *    · 每条都要让人**和 AI**一眼看出是哪个文件：折叠标题与正文首行都带**相对路径**
    *      （`AGENTS.md` 与 `.whale-craft/AGENTS.md` 是两回事）；
-   *    · `source` 写死 `{kind:'plugin', plugin:'whale_craft', form:'notice'}` → 插件提示行，不归到用户头上；
+   *    · `source` 写死 `{kind:'plugin:whale_craft', form:'notice'}`（v4 规范值）→ 插件提示行，不归到用户头上；
    *    · **不做 steer 兜底**（steer 空闲会"起一轮"＝没问就替用户说话）。
    */
   /**
@@ -2598,8 +2601,9 @@ export function apply(ctx, rawConfig) {
     return l
   }
 
-  /** 这条待投递消息是不是**我们**（whale_craft）投的插件提示行 */
-  const isOurNotice = (m) => String(m?.source?.plugin ?? '') === 'whale_craft' && m?.source?.form === 'notice'
+  /** 这条（会话日志里的）消息是不是**我们**（whale_craft）投的插件提示行
+   *  —— 认 `kind` 的 **v4 规范值**（回读日志用的判据，与投递侧同一口径；见 user-message.mjs 头注释） */
+  const isOurNotice = (m) => String(m?.source?.kind ?? '') === 'plugin:whale_craft' && m?.source?.form === 'notice'
 
   /** 提示行正文里"它出自哪个文件"（首行 `Instructions from: <rel>`），取不到就 null */
   const noticeRelOf = (m) => {
@@ -2813,7 +2817,9 @@ export function apply(ctx, rawConfig) {
    */
   const noticeMessagesFor = (todo) => todo.map((it) => userMessage({
     content: [{ type: 'text', text: `Instructions from: ${it.rel}\n\n${it.text}` }],
-    source: { kind: 'plugin', plugin: 'whale_craft', form: 'notice', summary: it.title },
+    // source.kind 用 **v4 规范值** `plugin:whale_craft`（v4 会话格式**拒绝**裸露的 'plugin'；
+    // 宿主 createUserMessage 对 source 原样透传、不会替我们修正）—— 见 src/user-message.mjs 头注释
+    source: { kind: 'plugin:whale_craft', form: 'notice', summary: it.title },
   }))
 
   /** 记一笔台账（投出去的那些文件名 + 正文，供诊断与"内容变了就地更新"） */

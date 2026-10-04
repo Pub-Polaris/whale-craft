@@ -68,7 +68,7 @@
 | `heartbeat` | ❌ | 距上次唤醒 ≥ `heartbeatSec`(300) 且在线 | `【心跳｜已挂机 Ns】` |
 
 - 同话题延续：唤醒后 `topicWindowSec`(120s) 内的发言**直接算 mention**。命中进 `pending` 攒 `observeWindowMs`(2s) 合并 → `#flush` 过 `maxWakePerMinute`(6) 限流 → 一条 `【MC 看门狗｜标签】` 正文注入。另有 `followUpAfterSec`(45)：唤醒后 45s 无下文补提醒一次。
-- **`#inject`（唯一注入口）**：① gate（非 MC 模式只记账 drop）；② **先 `sess.interruptWait(kind)`**；③ 首选 `agent.steer(userMessage(...))`（`source:{kind:'plugin',form:'notice'}`，宿主渲染成折叠一行；空闲时起一轮、运行中下一步插话）；④ 兜底 `sessionController.prompt({mode:'steer'}, promptSignal)`。**绝不用** `followup`/queue 类"冒充用户发言"的通道。
+- **`#inject`（唯一注入口）**：① gate（非 MC 模式只记账 drop）；② **先 `sess.interruptWait(kind)`**；③ 首选 `agent.steer(userMessage(...))`（`source:{kind:'plugin:whale_craft',form:'notice'}`——v4 规范值，宿主渲染成折叠一行；空闲时起一轮、运行中下一步插话）；④ 兜底 `sessionController.prompt({mode:'steer'}, promptSignal)`。**绝不用** `followup`/queue 类"冒充用户发言"的通道。
 - 留档 `this.log`（内存，上限 200，`#record` 是唯一写入点）—— 与 `sess.events` 分开，双写曾是 bug。
 
 ## 4. `src/memory.mjs` —— MemoryStore（记忆树）
@@ -96,9 +96,10 @@
 
 ## 7. `src/user-message.mjs` —— 插件提示行构造
 
-- `userMessage(input)`：宿主 `@deepseek-ai/dsh-llm` 的 `createUserMessage` 优先；解析不到/异常 → `builtinUserMessage`（自带等价实现：`{role:'user', content, source:{kind:'plugin'}, id}`）。
+- `userMessage(input)`：宿主 `@deepseek-ai/dsh-llm` 的 `createUserMessage` 优先；解析不到/异常 → `builtinUserMessage`（自带等价实现：`{role:'user', content, source:{kind:'plugin:whale_craft'}, id}`）。
 - `messageFactoryKind()`：诊断 `'host'|'builtin'`。
 - ⚠️ 存在理由：0.1.4 时该包漏进依赖声明 → 别人 npm 装出来"工具都在、提示词全无"。**依赖声明不能少**，兜底只是保险。
+- 🔴 `source.kind` 必须是 **v4 规范值 `plugin:whale_craft`**（v4 会话格式拒绝裸露的 `'plugin'`；宿主对 source 原样透传）——2026-10-04 按 PR #2（@swan3146）的真机实验 + 宿主 `dsh-session-format-v3-to-v4` 源码核实。
 
 ## 8. `src/config.mjs` —— 配置 + preset 规划
 

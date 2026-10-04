@@ -161,6 +161,8 @@ export class Watchdog {
     this.config.mentionPatterns = [...WATCH_DEFAULTS.mentionPatterns]
 
     this.jobId = null
+    /** 挂 job 时用的**会话 id 字符串**（宿主 owner/caller 要的就是它；见 #startJob 的注释） */
+    this.jobOwnerId = null
     this.armed = false
     this.startedAt = 0
     this.tickTimer = null
@@ -306,9 +308,11 @@ export class Watchdog {
     const jobId = this.jobId
     this.#teardown(reason)
 
-    // 停 job（若宿主没有 jobs、或本次就是 job 触发的，跳过）
+    // 停 job（若宿主没有 jobs、或本次就是 job 触发的，跳过）。
+    // 🔴 caller 必须是**会话 id 字符串**：宿主 `assertAccess()` 是 `job.owner.id !== caller → throw`，
+    //    传 agent 对象会被判成"别的会话的 job"而 kill 失败（静默卡在 stopping）。
     if (jobId && !fromJob) {
-      try { this.ctx.get('jobs')?.kill(jobId, this.agent, reason) } catch {}
+      try { this.ctx.get('jobs')?.kill(jobId, this.jobOwnerId ?? this.#ownerId(), reason) } catch {}
     }
     // 结算 done —— 否则 job 永远停在 'stopping'，job_list 里挂着不动、job_kill 永远"请求中"
     this.#settleJob(fromJob ? `被取消（${reason}）` : `已停止（${reason}）`)
@@ -337,10 +341,16 @@ export class Watchdog {
     const resolve = this._resolveJob
     this._resolveJob = null
     this.jobId = null
+    this.jobOwnerId = null
     if (typeof resolve !== 'function') return
     try {
       resolve({ status, detail: detail ?? 'killed', output: this.log.slice(-30).map((e) => e.text).join('\n') })
     } catch {}
+  }
+
+  /** 本会话的宿主 id（jobs 的 owner/caller 只认这个字符串；拿不到就 null） */
+  #ownerId () {
+    return this.agent?.id ?? this.sess?.agentId ?? null
   }
 
   #startJob () {
@@ -349,12 +359,22 @@ export class Watchdog {
       this.#record('lifecycle', '宿主没有 jobs 服务：看门狗以"无 job"模式运行（仍能唤醒，但 job_list 看不到）')
       return
     }
+    // 🔴 2026-10-04（PR #2 @swan3146 报的真机 bug）：`owner` 必须是**会话 id 字符串**。
+    //    宿主 `resolveOwner(session)` 拿它查 agents 注册表（`agents.get(session)`，按 id 索引）——
+    //    传 agent 对象必炸 `session "[object Object]" has no live agent`，job 挂不上、静默降级。
+    //    拿不到 id 时也**不许传 undefined**：无主 job 对**所有会话**可见（另一个坑）。
+    const ownerId = this.#ownerId()
+    if (!ownerId) {
+      this.#record('lifecycle', '拿不到会话 id：不挂后台 job（无主 job 会对所有会话可见），以"无 job"模式运行')
+      return
+    }
     const self = this
     try {
+      this.jobOwnerId = ownerId
       this.jobId = jobs.start({
         kind: 'mc-watch',
         label: `MC 看门狗（整局存活）`,
-        owner: this.agent,
+        owner: ownerId,
         run: () => ({
           // 宿主 job_kill → 这里。走 fromJob:true：拆除但**不回头 kill 自己**，
           // 并结算 done（否则 job 卡在 stopping）。
@@ -369,6 +389,7 @@ export class Watchdog {
     } catch (e) {
       this.#record('lifecycle', `挂 job 失败（降级为无 job 模式）：${e.message}`)
       this.jobId = null
+      this.jobOwnerId = null
     }
   }
 
@@ -595,9 +616,11 @@ export class Watchdog {
     //    **An idle driver starts a turn**; a running driver consumes it at its
     //    next step boundary." —— 空闲起一轮、运行中插下一步，正是我们要的两用。
     //
-    // source 用 `{kind:'plugin', form:'notice'}`：宿主把它渲染成**折叠的 notice 行**
+    // source 用 `{kind:'plugin:whale_craft', form:'notice'}`：宿主把它渲染成**折叠的 notice 行**
     //   （"One-line account of what happened, shown without expanding the row"），
     //   不是用户发言。summary 就是那一行。
+    //   🔴 kind 必须是 **v4 规范值** `plugin:whale_craft`——v4 会话格式**拒绝**裸露的 'plugin'
+    //   （见 src/user-message.mjs 头注释）。
     // ────────────────────────────────────────────────────────────────────────
     const agent = this.agent
     if (agent && typeof agent.steer === 'function') {
@@ -605,8 +628,7 @@ export class Watchdog {
         const message = userMessage({
           content: [{ type: 'text', text }],
           source: {
-            kind: 'plugin',
-            plugin: 'whale_craft',
+            kind: 'plugin:whale_craft',
             form: 'notice',
             summary: `MC 看门狗：${kind}`.slice(0, 120),
           },
