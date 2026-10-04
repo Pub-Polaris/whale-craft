@@ -1,6 +1,6 @@
 # 版本史、事故档案与设计决策
 
-> 快照：0.1.7 + main 2 个未发版 commit（2026-10-02）。
+> 快照：0.1.7 + main 未发版 commit（至 2026-10-04）。
 > 目的：遇到"这代码为什么写得这么绕/这么谨慎"时来这里找答案。每条都有出处（git log / CHANGELOG / 提交历史）。
 
 ## 1. 版本史（released）
@@ -79,6 +79,7 @@
 | F8 | 提示词页两条多余提示被删（0.1.5） | "还没到投递时机 / 开关是关的"——UI 别替用户做多余解释 |
 | F9 | `mc_kit_share` 被删（2026-09-16） | 它只是在调宿主**另装**的 `dsh-file-host`，不是插件自己的实现；"让用户看到文件"改走宿主 `present` + 本插件 `mc_kit_express`。自检留了"已移除 / 无文件服务器残留"断言防回归 |
 | F10 | 26.2 按键上报兼容层（`player_input`）整体移除（2026-10-02） | 上游还连不了 26.2——mineflayer 4.39.0 的 testedVersions 只到 26.1；minecraft-data 3.117.0 只收了 26.2 的**元数据**、没有数据目录（`minecraft-data('26.2')` 为 null）。插件里的该层属于不完整支持 → 代码 + 自检断言整体撤掉，留"已移除"护栏防残代码；将来上游就绪，按 CHANGELOG 0.1.7 的方案（先查后发）重建 |
+| F11 | 官方 dsh-desktop / 干净安装上插件 **`failed to import`**（issue #5，2026-10-04） | `index.js` 顶层**静态** import 两个 optional peer（`@deepseek-ai/dsh-tools`/`schemastery`）——包管理器永不装、desktop 上宿主包在 `app.asar` 里喂不进来 ⇒ 模块**链接期**失败（与 B1 的 dsh-llm 漏依赖同族，这次是"包在宿主里但插件解析不到"）。修法：两个包全部**可缺省**（`src/tool-def.mjs` 宿主优先/内置兜底；Config 拿不到 schemastery 就**不导出**、apply 自己兜默认值）。**本机 link 安装测不出来** ⇒ 新增"无宿主模拟"子进程自检 + CI 干净安装回归（已反证：改回静态 import 必红） |
 
 ## 3. 设计决策记录（"为什么这么设计"）
 
@@ -99,6 +100,7 @@
 | 心跳默认**关**（300s） | 防睡死是可选需求；默认关省 token。开启才走心跳文案 |
 | 唤醒矩阵多数"被动"事件默认关（pushed/捡物/上下线） | 太频繁，只留档不唤醒（`mc_watch log` 可看） |
 | 超时守卫定时器**故意 unref/不 unref** | `withTimeout` 守卫**不 unref**（否则只剩它跑时进程提前退出）；observer timer 可 unref；`disconnect` 宽限计时器**不 unref**（要等完） |
+| 宿主包（`dsh-tools`/`schemastery`）**可缺省**，不塞进 `dependencies` | 塞 dependencies 会在 profile 里装出**第二份** Tool/schema，破坏"全进程单实例"语义（这正是它们当初被改成 optional peer 的原因）；宿主拿不到时用自带等价实现兜底，编译形状与报错文案**逐字对齐宿主**、由"无宿主模拟"自检钉死 |
 | `check-core` 抓"私有字段一致性" | 大文件少换行 → V8 提前结束 class → 报误导性错误；`config.mjs` 两行粘连只有动态 import 才炸 |
 | selfcheck 末尾恒 `exit(0)`、几乎不用 assert 库 | 设计成"人可读的 ✅ 清单"；只有 apply() 抛错才红——它定位是**回归护栏 + 文档**，不是严苛测试框架 |
 

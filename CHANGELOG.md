@@ -2,6 +2,26 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 🔴 修复（干净环境 / 官方 dsh-desktop 安装后 `failed to import`：顶层静态 import 了两个**永不安装**的宿主包）
+
+- **现象**（GitHub issue #5）：npm 装出来的插件、或官方 dsh-desktop 上，启动只报一句
+  `whale_craft (whale_craft): failed to import`（真实原因被宿主吞掉）。
+- **根因**：`index.js` 顶层**静态** import `@deepseek-ai/schemastery` 与 `@deepseek-ai/dsh-tools`，
+  而它们是 **optional peer** —— 包管理器永远不装，宿主在官方 desktop 上又在 `app.asar` 里喂不进来
+  ⇒ 模块**链接期**就失败，loader 拿不到 fiber。与插件逻辑无关（mineflayer/vec3 都是好的）。
+- **修法**：两个宿主包改为"**可缺省**"——宿主给得到就复用宿主那份（CLI/源码安装行为完全不变）；
+  拿不到退化成自带等价实现（新模块 `src/tool-def.mjs`：内置 `defineTool` 的编译与入参校验逐字对齐宿主；
+  `Config` 在 schemastery 缺失时**不导出**，`apply()` 自己兜 `mentions` 默认值）。
+- **用户影响**：官方 dsh-desktop 等"宿主包不可解析"的环境从"必然加载失败"变为**正常加载**
+  （这份桌面版从此能用）；已正常的安装零变化、零迁移。
+- **自检**：新增"无宿主模拟"——子进程用解析钩子屏蔽两个宿主包后**整树自检照跑**，
+  并把 29 个工具的参数 JSON Schema / output schema / timeoutMs 与宿主编译结果**逐字比对**；
+  另有内置编译器/校验器的逐字对拍与行为断言。
+- **CI**：新增干净环境回归 `tools/check-standalone-import.mjs`（`npm pack` → 独立目录 `npm install`
+  → `import('whale_craft')` 必须成功）——把 `index.js` 改回静态 import 时这一步会变红（已反证）。
+
 ## [0.1.7] - 2026-09-20
 
 > 这一版在 0.1.6 之上修了三个**真机问题**（都是用户/其他使用者实测报上来的），并订正了几处"状态在撒谎"。

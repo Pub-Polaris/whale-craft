@@ -225,7 +225,9 @@ const fakeCtx = {
 }
 
 const mod = await import('./index.js')
+const toolDef = await import('./src/tool-def.mjs')
 console.log('插件导出:', Object.keys(mod).join(', '))
+console.log(`工具定义来源: toolDefKind()=${toolDef.toolDefKind()}${toolDef.loadNote ? '（' + toolDef.loadNote + '）' : ''}`)
 
 const config = mod.Config ? mod.Config({}) : {}
 console.log('Config 解析结果:', JSON.stringify(config, null, 1))
@@ -242,6 +244,22 @@ console.log(`\n✅ 注册工具 ${tools.size} 个：`)
 for (const [n, d] of tools) {
   const params = Object.keys(d.parameters ?? {})
   console.log(`  ${n}${params.length ? ' (' + params.join(', ') + ')' : ''} —— ${String(d.description ?? '').slice(0, 50)}`)
+}
+
+// 「无宿主模拟」子进程用：`WHALE_CRAFT_DUMP_TOOLS=<file>` 时把注册结果落盘（父/子两份逐字比对）。
+// 只含**可序列化**的注册形状：参数 JSON Schema（宿主编译的）+ output schema + timeoutMs。
+if (process.env.WHALE_CRAFT_DUMP_TOOLS) {
+  const { writeFileSync } = await import('node:fs')
+  writeFileSync(process.env.WHALE_CRAFT_DUMP_TOOLS, JSON.stringify({
+    toolDefKind: toolDef.toolDefKind(),
+    configPresent: Boolean(mod.Config),
+    tools: [...tools.entries()].map(([name, d]) => ({
+      name,
+      parameters: d.parameters,
+      outputSchema: d.output?.schema,
+      timeoutMs: d.timeoutMs ?? null,
+    })),
+  }, null, 1), 'utf8')
 }
 
 // ── 工具面：mc_kit_share 已移除 / present 已接上（用户 2026-09-16）──
@@ -1314,7 +1332,7 @@ console.log('\n--- 归档保护 ---')
       inject: (deps, cb) => { pending.push({ deps, cb }) },
       logger2: null,
     }
-    mod3.apply(ctx3, mod3.Config({}))
+    mod3.apply(ctx3, mod3.Config ? mod3.Config({}) : {})
     const registered = pending.some((p) => p.deps.includes('workspaceRegistry'))
     console.log(`  ${registered ? '✅' : '❌'} 服务未就绪时登记了 ctx.inject(['workspaceRegistry'])`)
 
@@ -3658,6 +3676,113 @@ console.log('\n--- 依赖面 + 打包完整性（mineflayer 是**依赖**不是"
     ]
     for (const [label, passed] of toolChecks) console.log(`  ${passed ? '✅' : '❌'} ${label}`)
   }
+}
+
+/* ── 宿主包缺省（src/tool-def.mjs 的内置兜底）──────────────────────────────────
+ * 背景（GitHub issue #5）：index.js 顶层曾静态 import 两个 optional peer ⇒ 干净安装 /
+ * 官方 dsh-desktop 上模块链接期失败，宿主只报 `failed to import`。这里钉住两条路：
+ *   A. 内置 defineTool 与宿主编译/校验逐字一致（本环境有宿主时直接对拍；没有则 ℹ️ 跳过）；
+ *   B. "两个包都拿不到"的整树模拟（子进程 + 解析钩子）：apply 不抛、工具面完整、注册形状逐字一致。 */
+console.log('\n--- 宿主包缺省：内置 defineTool（tool-def.mjs）---')
+{
+  console.log(`  ℹ️ 工具定义来源 kind=${toolDef.toolDefKind()}${toolDef.loadNote ? '（' + toolDef.loadNote + '）' : ''}`)
+
+  // A1：与宿主编译器逐字对拍（代表性 spec 覆盖 29 个工具实际用到的全部形态）
+  const hostMod = toolDef.hostDefineTool ? await import('@deepseek-ai/dsh-tools') : null
+  const repSpec = {
+    mode: { type: 'string', description: '模式' },
+    count: { type: 'number' },
+    flag: { type: 'boolean' },
+    patch: { type: 'object', additionalProperties: true, description: '补丁' },
+    steps: { type: 'array', items: { type: 'object', additionalProperties: true }, description: '步骤' },
+    names: { type: 'array', items: { type: 'string' } },
+    value: { type: 'json', description: '任意值' },
+    must: { type: 'string', required: true },
+  }
+  const textOut = { type: 'object', properties: {}, additionalProperties: true }
+  if (!hostMod) {
+    console.log('  ℹ️ 本环境没有宿主 @deepseek-ai/dsh-tools，跳过逐字对拍（开发机/CI 有宿主，会实际比对）')
+  } else {
+    const sameParams = JSON.stringify(hostMod.parameterSchemaSpecToJsonSchema(repSpec)) === JSON.stringify(toolDef.parameterSchemaSpecToJsonSchema(repSpec))
+    console.log(`  ${sameParams ? '✅' : '❌'} 内置编译器的 parameters JSON Schema 与宿主**逐字一致**（含 key 顺序）`)
+    const sameOut = JSON.stringify(hostMod.valueSchemaSpecToJsonSchema(textOut)) === JSON.stringify(toolDef.valueSchemaSpecToJsonSchema(textOut))
+    console.log(`  ${sameOut ? '✅' : '❌'} output.schema 走同一编译（text() 的形态逐字一致）`)
+    const schemaH = hostMod.parameterSchemaSpecToJsonSchema(repSpec)
+    const schemaB = toolDef.parameterSchemaSpecToJsonSchema(repSpec)
+    const badArgs = [{}, { must: 'x', count: 'no' }, { must: 'x', patch: 123 }, { must: 'x', patch: { k: {} }, value: new Date() }, { must: 'x', steps: 'nope' }, { must: 'x', names: ['a', 2] }]
+    const vSame = badArgs.every((a) => JSON.stringify(hostMod.validateJsonSchemaValue(schemaH, a, '')) === JSON.stringify(toolDef.validateJsonSchemaValue(schemaB, a, '')))
+    console.log(`  ${vSame ? '✅' : '❌'} 内置校验的违规文案/路径与宿主**逐字一致**（${badArgs.length} 组坏入参）`)
+  }
+
+  // A2：内置 defineTool 行为（不依赖宿主，任何环境都跑）
+  const def = toolDef.builtinDefineTool({
+    name: 't_def', description: 'd', parameters: repSpec, output: { schema: textOut, render: () => [] }, timeoutMs: 5000,
+    async execute (args) { return { got: args.must } },
+  })
+  console.log(`  ${def.timeoutMs === 5000 ? '✅' : '❌'} timeoutMs 透传（host defineTool 同款）`)
+  const bad = await def.execute({}).then(() => null, (e) => e)
+  console.log(`  ${bad && bad.name === 'ToolArgsError' && bad.code === 'INVALID_ARGS' && bad.message === 'invalid arguments: missing required property "must"' ? '✅' : '❌'} 坏入参抛 ToolArgsError/INVALID_ARGS，文案与宿主逐字一致（实际：${bad ? JSON.stringify(bad.message) : '没抛'}）`)
+  const good = await def.execute({ must: 'hi' }).then((r) => r, () => null)
+  console.log(`  ${good && good.got === 'hi' ? '✅' : '❌'} 合法入参放行到用户实现`)
+  const threw = (fn) => { try { fn(); return false } catch { return true } }
+  console.log(`  ${threw(() => toolDef.parameterSchemaSpecToJsonSchema({ x: { oneOf: [{ type: 'string' }] } })) ? '✅' : '❌'} 未支持形态（oneOf）抛错（防静默走样）`)
+  console.log(`  ${threw(() => toolDef.parameterSchemaSpecToJsonSchema({ x: { type: 'object' } })) ? '✅' : '❌'} object 不写 additionalProperties 抛错（宿主同款约束）`)
+  console.log(`  ${threw(() => toolDef.builtinDefineTool({ name: 't', description: 'd', parameters: {}, output: { schema: textOut, render: () => [] }, finalizeContent: () => {}, execute: async () => ({}) })) ? '✅' : '❌'} 未支持选项（finalizeContent）抛错（将来真要用会当场红）`)
+  console.log(`  ${threw(() => toolDef.builtinDefineTool({ name: 't', description: 'd', parameters: {}, output: { schema: textOut, render: () => [] }, timeoutMs: 0, execute: async () => ({}) })) ? '✅' : '❌'} 非法 timeoutMs 抛错（宿主同款）`)
+}
+
+console.log('\n--- 无宿主模拟：屏蔽两个宿主包，整树自检 + 注册形状逐字比对（子进程）---')
+if (process.env.WHALE_CRAFT_NO_HOST_SIM === '1') {
+  console.log('  ℹ️ 本进程就是"无宿主模拟"子进程（整段跳过，防递归）')
+} else if (toolDef.toolDefKind() !== 'host') {
+  console.log('  ℹ️ 本环境没有宿主 @deepseek-ai/dsh-tools（kind=builtin）——没有比对参照系，跳过')
+} else {
+  const { execFileSync } = await import('node:child_process')
+  const { pathToFileURL, fileURLToPath } = await import('node:url')
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'whale-craft-nohost-'))
+  const dumpPath = join(dir, 'child-tools.json')
+  let childFail = null
+  let childDump = null
+  try {
+    execFileSync(process.execPath, [
+      '--import', pathToFileURL(fileURLToPath(new URL('./tools/no-host-init.mjs', import.meta.url))).href,
+      fileURLToPath(new URL('./selfcheck.mjs', import.meta.url)),
+    ], {
+      cwd: fileURLToPath(new URL('./', import.meta.url)),
+      env: { ...process.env, WHALE_CRAFT_NO_HOST_SIM: '1', WHALE_CRAFT_DUMP_TOOLS: dumpPath, NODE_NO_WARNINGS: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    })
+    childDump = JSON.parse(readFileSync(dumpPath, 'utf8'))
+  } catch (e) { childFail = e }
+
+  const childOut = String(childFail?.stdout ?? '')
+  // 只认**行首**的 ❌（断言状态位）；文案里出现的 ❌ 字面（如本行的"0 ❌"）不算
+  const failLines = childOut.split('\n').filter((l) => /^[ \t]*❌/.test(l))
+  const okRun = !childFail && failLines.length === 0
+  console.log(`  ${okRun ? '✅' : '❌'} 无宿主环境下整树自检子进程跑通（exit 0 且 0 ❌；实际 ${childFail ? '退出码非 0' : `${failLines.length} 个 ❌`}）`)
+  if (!okRun) {
+    console.log(failLines.slice(0, 5).map((l) => '     ' + l.trim()).join('\n') || `     ${String(childFail?.message ?? '').split('\n')[0]}`)
+  }
+  console.log(`  ${childDump?.toolDefKind === 'builtin' ? '✅' : '❌'} 子进程确实走了内置路（kind=${childDump?.toolDefKind}；屏蔽失败的话这里会是 host）`)
+  console.log(`  ${childDump?.configPresent === false ? '✅' : '❌'} 子进程里 Config === undefined（schemastery 拿不到 ⇒ 不导出 schema、apply 自己兜默认值）`)
+
+  const parentList = [...tools.entries()].map(([name, d]) => ({ name, parameters: d.parameters, outputSchema: d.output?.schema, timeoutMs: d.timeoutMs ?? null }))
+  const childList = childDump?.tools ?? []
+  const same = JSON.stringify(parentList) === JSON.stringify(childList)
+  console.log(`  ${same ? '✅' : '❌'} 🔴 ${tools.size} 个工具的 parameters / output.schema / timeoutMs 与宿主编译结果**逐字一致**`)
+  if (!same) {
+    for (let i = 0; i < Math.max(parentList.length, childList.length); i++) {
+      const p = JSON.stringify(parentList[i] ?? null)
+      const c = JSON.stringify(childList[i] ?? null)
+      if (p !== c) { console.log(`     首个不一致 #${i}：\n       父=${p.slice(0, 200)}\n       子=${c.slice(0, 200)}`); break }
+    }
+  }
+  try { rmSync(dir, { recursive: true, force: true }) } catch {}
 }
 
 console.log('\n日志:', logs.slice(0, 6).join(' | ') || '(无)')

@@ -180,8 +180,17 @@
 - `WRITE_FILE_TOOLS=/^(write|edit)$/`、`MEMORY_WRITE_ACTIONS=append/write/delete/put`；`rejectionText()` / `protectedWriteError(rel)` 统一文案。
 - guard（index.js）对文件工具用它 + **解析到记忆根后正好是该文件**的二次判定（memoryDir 重定向时绝对路径不含 `.whale-craft` 段）；写入路径以 memory.mjs 的 `target.protected` 为兜底。
 
-## 16. 模块依赖与不变式
+## 16. `src/tool-def.mjs` —— 工具定义（宿主优先 + 内置兜底）
 
-- 模块间 import：`config.mjs → express.mjs`（`EXPRESS_MODES/normalizeExpressBase/resolveExpressMode`）；`agentsmd.mjs → wsconfig.mjs`（版本读写）；`memory.mjs → protected.mjs`（保护判定）；index.js 组装其余。
+> 2026-10-04（GitHub issue #5）：`index.js` 顶层曾**静态** import 两个 optional peer（`@deepseek-ai/dsh-tools` / `schemastery`）⇒ 干净安装 / 官方 dsh-desktop 上模块**链接期**失败，宿主只报一句 `failed to import`。本模块沿用 `user-message.mjs` 的同款模式（宿主优先、内置兜底、`kind()` 诊断）。
+
+- `defineTool(options)`：`toolDefKind()==='host'` 时用宿主的 defineTool（本机 CLI/源码安装行为完全不变）；解析不到用 `builtinDefineTool`。
+- 内置 compiler：`parameters`（属性表 DSL）→ JSON Schema，**key 顺序与宿主逐字一致**（标量 `{type,注解,enum,const}`；object `{type,注解,additionalProperties,properties(声明了才有),required(非空才有)}`；`type:'json'` → 仅注解无 type；属性 `required:true` 收进**父级** required）；`timeoutMs` 透传；oneOf / 未声明 additionalProperties 的 object / presenter 类选项 → **明确抛错**（防静默走样，自检会当场红）。
+- 内置 validator：宿主 `validateJsonSchemaValue` 的子集，违规文案/路径逐字对齐（`"arguments" must be an object` 等）；违规抛 `BuiltinToolArgsError`（name=`ToolArgsError`、code=`INVALID_ARGS`）。⚠️ 它不是宿主 `HarnessError` 子类（拿不到宿主类）——宿主显示层会退化成通用错误，文案保持一致（任务书认可的退化）。
+- 自检：段 A 直接与宿主编译器对拍；段 B 用 `tools/no-host-init.mjs`（module.register 解析钩子）屏蔽两个包，子进程**整树自检** + 29 个工具注册形状**逐字比对**。CI 另有 `tools/check-standalone-import.mjs`（干净安装 import 回归；改回静态 import 必红）。
+
+## 17. 模块依赖与不变式
+
+- 模块间 import：`config.mjs → express.mjs`（`EXPRESS_MODES/normalizeExpressBase/resolveExpressMode`）；`agentsmd.mjs → wsconfig.mjs`（版本读写）；`memory.mjs → protected.mjs`（保护判定）；`tool-def.mjs` 自解析宿主包（可缺省）；index.js 组装其余。
 - 记忆根定位（index.js `memoryRootFor`）：`WHALE_CRAFT_MEMORY_DIR` env → `pluginConfig.memoryDir` → `<会话 cwd>/.whale-craft` → `stateDir/memory` 兜底。
 - 跨模块不变式：① 记忆路径全过 `safePath`，受保护文件（RULES/AGENTS/config.json）**可读不可写**（写类方法拒绝）；② 凭据只进宿主凭据服务，`view()`/工具返回/HTTP 永不见；③ 发布区只服务 `.express/`，`.out/` 永不对外；④ LAN 只被动听；⑤ ping 永不 reject；⑥ 一切写给模型的注入都是"提示行"。

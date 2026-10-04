@@ -35,8 +35,9 @@
 
 ```bash
 node tools/check-core.mjs     # ① 全树语法(node --check) ② 动态 import src 纯模块 ③ 私有字段(#x)声明/引用一致性
-node selfcheck.mjs            # 600+ 条离线断言（假 ctx 加载真 apply()；不连 MC、不碰真实实例）
+node selfcheck.mjs            # 600+ 条离线断言（假 ctx 加载真 apply()；不连 MC、不碰真实实例；含"无宿主模拟"子进程）
 npm run check                 # = 上面两条
+node tools/check-standalone-import.mjs   # 干净环境回归（pack→独立目录 install→import；要联网装依赖，CI 跑）
 
 npm run dev:web               # 起隔离调试实例（web）——本机主用
 npm run dev:desktop           # 起隔离调试实例（desktop 壳；先完全退出日常桌面应用）
@@ -68,7 +69,8 @@ npm run dev:stop              # 按 pidfile 停实例
 
 - **形态**：假 ctx（工具注册表、sessionController、jobs、agentPresets…全部 stub）+ 加载**真** `apply()`；用 `console.log('  ✅/❌ …')` 输出；只有 `apply()` 抛错才 `exit 1`，末尾恒 `process.exit(0)`。
 - **污染隔离**：`MC_LOG` → `logs/selfcheck.log`；`WHALE_CRAFT_DIR`/`WHALE_CRAFT_MEMORY_DIR` → `mkdtemp` 临时目录（构造用 `fileURLToPath` 而非 `new URL().pathname`——中文用户名路径会被百分号编码，2026-09-24 卡过自检）。
-- **覆盖分组**（节标题）：超时保护单元｜工具面与参数｜每会话实例分离｜未连接行为｜看门狗 v2（含断线同步、等待被打断）｜mc_act/give/sequence/stop｜强制停止顺序｜MC设置 HTTP（真路由）｜发布区与文件分享（防穿透/两模式/base 推导）｜玩家说话辨认｜记忆树｜图像地图｜扩展点｜归档保护｜提示词注入单通道与去重｜配置+权限隔离｜协议护栏禁发未知包｜幽灵在线｜账户/凭据分离｜受保护文件（RULES/AGENTS/config.json 可读不可写）与版本标记｜认证 URL｜未处理拒绝不留患｜唤醒投递（必须提示词注入）｜job 结算｜事件队列单一写入方｜无 OP 建造｜放置判据（与 minecraft-data 真值表比对）｜mc_connect 全参数｜client bundle 静态断言｜mc_lan/mc_ping｜设置页 UI 静态断言｜打包完整性。
+- **覆盖分组**（节标题）：超时保护单元｜工具面与参数｜每会话实例分离｜未连接行为｜看门狗 v2（含断线同步、等待被打断）｜mc_act/give/sequence/stop｜强制停止顺序｜MC设置 HTTP（真路由）｜发布区与文件分享（防穿透/两模式/base 推导）｜玩家说话辨认｜记忆树｜图像地图｜扩展点｜归档保护｜提示词注入单通道与去重｜配置+权限隔离｜协议护栏禁发未知包｜幽灵在线｜账户/凭据分离｜受保护文件（RULES/AGENTS/config.json 可读不可写）与版本标记｜认证 URL｜未处理拒绝不留患｜唤醒投递（必须提示词注入）｜job 结算｜事件队列单一写入方｜无 OP 建造｜放置判据（与 minecraft-data 真值表比对）｜mc_connect 全参数｜client bundle 静态断言｜mc_lan/mc_ping｜设置页 UI 静态断言｜打包完整性｜**宿主包缺省**（内置 defineTool 与宿主逐字对拍 + 无宿主模拟子进程）。
+- **无宿主模拟**（2026-10-04，issue #5）：`tools/no-host-init.mjs`（module.register 解析钩子）屏蔽 `@deepseek-ai/dsh-tools`/`schemastery` 后**再跑一遍 selfcheck**（子进程），并逐字比对 29 个工具的注册形状——本机 link 安装测不出的问题靠它钉住；发布侧另有 `tools/check-standalone-import.mjs`（干净安装 import 回归，CI 必跑，改回静态 import 必红）。
 - **加断言的惯例**：断言要打在**真实实现**上（别只测 stub）；曾有"集成断言假绿"（复制完 preset 要改 persona/关 shell 那两条测不到）与"前端拿不到真路由"（真机 404）的教训，所以有一条专门**打真路由**的断言。计数口径：README 里写的 726/686 是历史数字，以实际运行为准（当前 600+ ✅）。
 
 ## 6. 调试技巧
@@ -105,4 +107,5 @@ npm run dev:stop              # 按 pidfile 停实例
 | 报"成功" | 复验实际状态（blockAt / 状态字段）再报 |
 | 改工具返回值 | 过 `lossless`（经 asTool 自动） |
 | 投递提示/唤醒 | 走 `userMessage()` + 看门狗 `#inject`；先 `interruptWait` |
+| 新增**可选宿主包**（宿主可能给不到） | 顶层**绝不静态 import**（`await import()`+try/catch）；宿主优先、`kind()` 记来源；拿不到写**等价实现**并在 selfcheck 里与宿主**逐字对拍**；名字加进 `tools/no-host-hooks.mjs` 名单；CI 的 standalone 回归自动覆盖任何包（详见 src-modules.md §16、history F11） |
 | 动 `.github/workflows/*` | 用 Contents API 落地（workflow scope 坑，见 release.md） |

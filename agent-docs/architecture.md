@@ -12,7 +12,8 @@ whale_craft 是**标准 DSH 插件**（两半端）：
 | client（浏览器） | `client.js` | `package.json` → `exports["./client"]`；`dsh.client.platform: "web"` |
 
 - `cordis.patch.yml` 内容就一件事：`insert: - id: whale_craft / name: whale_craft`（2026-10-02 起连 config 块也去掉了——`autoConnect` 是 0.1 时代的死配置）。
-- `index.js` 导出 `name='whale_craft'`、`inject=['webServer','tools']`、`Config`（schemastery schema）、`apply(ctx, config)`。
+- `index.js` 导出 `name='whale_craft'`、`inject=['webServer','tools']`、`Config`（schemastery schema；**宿主拿不到 schemastery 时不导出**，`apply` 自己兜默认值——见 [src-modules.md §16](src-modules.md)）、`apply(ctx, config)`。
+  - 两个宿主包（`@deepseek-ai/dsh-tools` / `schemastery`）都是 **optional 且可缺省**：顶层不做静态 import（那会让干净安装/官方 desktop 在链接期就 `failed to import`，issue #5）；`defineTool` 走 `src/tool-def.mjs` 的宿主优先/内置兜底。
 - **host 半端不热重载**（装/改后要重启 DSH）；**client bundle 是 HMR 热更**的。
 - 浏览器端入口协议：`window.__ModuleLoader__.load({ id:'whale_craft', factory(require){...} })`，`apply(ctx)` 往 `slots` 注册三个插槽。
 

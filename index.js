@@ -18,8 +18,10 @@
  * 挂载：profile cordis.patch.yml 里 `- id: whale_craft / name: whale_craft`。
  * ============================================================================
  */
-import z from '@deepseek-ai/schemastery'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+/* 🔴 2026-10-04（GitHub issue #5）：这里**曾经**是两行静态 import（`@deepseek-ai/schemastery` /
+ * `@deepseek-ai/dsh-tools`）—— 它们是 **optional peer**（包管理器永远不装），官方 dsh-desktop 上宿主
+ * 解析层也喂不进来 ⇒ 模块**链接期**就失败，宿主只报一句 `failed to import`。现在两条路都"拿不到也能活"：
+ * `z` 在下面按需动态 import（拿不到就**不导出** Config）；`defineTool` 来自 src/tool-def.mjs（宿主优先 + 内置兜底）。 */
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, unlinkSync, statSync, renameSync, realpathSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
@@ -27,6 +29,7 @@ import { createRequire } from 'node:module'
 import { resolve, sep, join, isAbsolute, dirname } from 'node:path'
 import { homedir } from 'node:os'
 import { McBot, lossless, logLine, libraryInfo } from './src/core.mjs'
+import { defineTool, toolDefKind } from './src/tool-def.mjs'
 import { versionPromptText, versionPromptTitle, versionPromptSource } from './src/version-prompt.mjs'
 import { EXPRESS_DIR, OUT_DIR, expressRootOf, outRootOf, parseExpressPath, safeExpressTarget, mimeOf, SANDBOX_TYPES, expressRefFor, EXPRESS_OFF_TEXT, EXPRESS_NEED_BASE_TEXT, normalizeExpressBase, onlineUrlOf } from './src/express.mjs'
 import { Watchdog, WATCH_DEFAULTS } from './src/watchdog.mjs'
@@ -112,23 +115,33 @@ function readJsonBody(req) {
  * Config = 纯**行为配置**（与"连哪个服"无关）。
  * 连接参数全在 mc_connect 工具里；0.1 时代的遗留 fallback 字段
  * （host/port/subserver/authUrl/authUser/authPass/autoConnect）已无人读，2026-10-02 清除。
+ *
+ * 🔴 2026-10-04：schema 由宿主 `@deepseek-ai/schemastery` 提供，**拿不到就不导出 Config**（= undefined）——
+ *   cordis 对此是容忍的（`if (!runtime.Config) return config`），但也就**不会替我们填默认值** ⇒
+ *   `apply()` 里自己兜 `DEFAULT_MENTIONS`。
+ *   ⚠️ **绝不能**退化成一个普通对象：cordis 会去调 `Config['~standard'].validate` 而当场炸。
  */
-export const Config = z.object({
+let z = null
+try { z = (await import('@deepseek-ai/schemastery')).default ?? null } catch { /* 宿主没喂 ⇒ 不要 Config */ }
+
+/**
+ * 默认"喊我"触发词（正则，大小写不敏感）。聊天里命中这些词才算在叫我。
+ *
+ * 🔴 2026-09-16 用户投诉："为什么这台服务器上会有那种叫法的记忆？你暴露了些什么东西出去了！"
+ *    根因就是这里**曾经把私人的账号名/昵称写成了默认值**——那串名字跟着代码进了**公开的开源副本**。
+ *    默认值只留**通用叫法**；具体账号名由插件在连接成功后**从登录档案里现学**
+ *    （见 `Watchdog.learnName`），外号用 `mc_config {patch:{mentionPatterns:[…]}}` 加
+ *    —— **代码里永不再出现私人名字**。
+ */
+export const DEFAULT_MENTIONS = [
+  'deepseek', 'deep\\s*seek', '\\bds\\b', '\\bdsh\\b', '\\bai\\b', 'agent',
+  '机器人', '麦块',
+]
+
+export const Config = z ? z.object({
   // ── 行为配置 ──
-  /**
-   * "喊我"的触发词（正则，大小写不敏感）。聊天里命中这些词才算在叫我。
-   *
-   * 🔴 2026-09-16 用户投诉："为什么这台服务器上会有那种叫法的记忆？你暴露了些什么东西出去了！"
-   *    根因就是这里**曾经把私人的账号名/昵称写成了默认值**——那串名字跟着代码进了**公开的开源副本**。
-   *    默认值只留**通用叫法**；具体账号名由插件在连接成功后**从登录档案里现学**
-   *    （见 `Watchdog.learnName`），外号用 `mc_config {patch:{mentionPatterns:[…]}}` 加
-   *    —— **代码里永不再出现私人名字**。
-   */
-  mentions: z.array(z.string()).default([
-    'deepseek', 'deep\\s*seek', '\\bds\\b', '\\bdsh\\b', '\\bai\\b', 'agent',
-    '机器人', '麦块',
-  ]),
-})
+  mentions: z.array(z.string()).default(DEFAULT_MENTIONS),
+}) : undefined
 
 
 /* ======================== 每会话独立实例 ======================== */
@@ -334,7 +347,12 @@ function ensureWatchdog (ctx, sess, agent, promptSignal = null, gate = null) {
 
 /* ============================ 插件主体 ============================ */
 
-export function apply(ctx, config) {
+export function apply(ctx, rawConfig) {
+  /* 拿得到 schemastery 时，宿主按 Config schema 把 `mentions` 的默认值填好；拿不到时（官方 desktop）
+     cordis 原样透传（甚至整个 config 是 undefined）—— 这里兜一次。
+     显式传了数组（包括空数组 = "不认任何叫法"）就尊重原值。 */
+  const config = { ...(rawConfig ?? {}) }
+  if (!Array.isArray(config.mentions)) config.mentions = [...DEFAULT_MENTIONS]
   const registry = new McRegistry(ctx, config)
 
   /* ── 插件状态目录（**配置 + 账户库**）：`$DSH_HOME/whale_craft/` ──────────────────
@@ -446,7 +464,9 @@ export function apply(ctx, config) {
     if (!sessionId) return null
     try { return ctx.get('agents')?.get?.(String(sessionId)) ?? null } catch { return null }
   }
-  logLine(`whale_craft：配置 ${pluginConfig.file}｜记忆 <会话工作区>/.whale-craft（兜底 ${memory.root}）`)
+  logLine(`whale_craft：配置 ${pluginConfig.file}｜记忆 <会话工作区>/.whale-craft（兜底 ${memory.root}）`
+    + `｜工具定义 ${toolDefKind() === 'host' ? '宿主 @deepseek-ai/dsh-tools' : '自带兜底'}`
+    + `｜Config ${Config ? 'schema（宿主 schemastery）' : '无（宿主 schemastery 不可用）'}`)
 
   /* ─────────── 发布区（`.whale-craft/.express/`）：地址用**工作区 uuid** ───────────
    * 用户 2026-09-17 定稿：`<base>/api/whale-craft/express/<工作区 uuid>/<剩余路径>`。

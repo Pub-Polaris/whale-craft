@@ -45,6 +45,7 @@
 | DSH | 已发布在 npm（`@deepseek-ai/dsh`）；本插件只用公开契约（`dsh.bundle.patch` + `exports["./client"]`） |
 | Node | ≥ 22（跟 DSH 一致） |
 | Minecraft 机器人 | `mineflayer`，插件的**直接依赖** —— 跟着一起装好，不用你动手 |
+| 宿主包（可缺省） | `@deepseek-ai/dsh-tools` / `@deepseek-ai/schemastery` **拿不到也能跑**：有宿主就复用宿主那份；拿不到（如官方 dsh-desktop）自动退化成插件自带的等价实现 —— 不用装任何东西 |
 | 可选 | `sharp`（SVG→PNG 光栅化）—— 装不上只影响 `mc_kit_image` 的渲染，其它功能照常 |
 
 ---
@@ -295,6 +296,7 @@ dsh plugin --profile web add link:/path/to/whale-craft
 ```bash
 node tools/check-core.mjs     # 全树语法 + 动态 import + 私有字段一致性（改 core.mjs 必跑）
 node selfcheck.mjs            # 726 条离线断言（假 ctx，不需要 MC 服务器、不连网）
+node tools/check-standalone-import.mjs   # 干净环境回归：pack → 独立目录 install → import 必须成功（慢，CI 跑）
 # 起一个隔离 DSH 实例验证"整树加载"（需要一份 DSH checkout）：
 DSH_ROOT=/path/to/deepseek-harness node tools/isolate.mjs start
 ```
@@ -306,7 +308,9 @@ DSH_ROOT=/path/to/deepseek-harness node tools/isolate.mjs start
 依赖面（含"`vec3` 与 `mineflayer` 必须是同一份"这类运行时断言），以及客户端 bundle 的静态检查。
 
 CI 跑的就是这两条（`.github/workflows/ci.yml`）：**ubuntu（Node 22 / 24）+ windows（Node 22）**；
-另有一个「打包产物」job，`npm pack` 之后核对 tarball 里该有的文件都在、且没混进 `node_modules` / 日志 / 账户。
+另有一个「打包产物」job，`npm pack` 之后核对 tarball 里该有的文件都在、且没混进 `node_modules` / 日志 / 账户，
+再跑一遍 **干净环境回归**（pack → 独立目录 `npm install` → `import('whale_craft')` 必须成功 ——
+本机 link 安装永远测不出「宿主包解析不到」，只有干净安装复现得了用户环境，见 issue #5）。
 
 发布走 tag（`.github/workflows/release.yml`）：`git tag v0.1.7 && git push origin v0.1.7` →
 先跑上面两条 + 校验 tag 与 `package.json` 版本一致，再 `npm pack` 并把 zip 挂到 GitHub Release
@@ -400,6 +404,10 @@ dsh plugin --profile web add link:/path/to/whale-craft
 
 This installs the package and appends `whale_craft` to `dsh.profile.bundles`.
 `mineflayer` ships as a regular dependency — **you do not need to install it yourself**.
+
+The host packages (`@deepseek-ai/dsh-tools` / `@deepseek-ai/schemastery`) are **optional**: when the host
+provides them they are reused as-is; when it cannot (e.g. the stock dsh-desktop, where they live inside
+`app.asar`), the plugin falls back to bundled equivalents. It loads either way — nothing extra to install.
 
 ### Use
 
