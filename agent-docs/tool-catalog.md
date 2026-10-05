@@ -1,9 +1,10 @@
-# 工具目录（29 个）
+# 工具目录（31 个）
 
 > 快照：**0.2.0**（开发中，未发布）。注册全部在 `index.js` 的 `apply()` 内（`ctx.tools.register(asTool({...}))`），
-> 分三段：`mc_*`（游戏内，25）/ `mc_kit_*`（游戏外辅助，3）/ `mc_admin_*`（管理，1）。
+> 分四段：`mc_*`（游戏内，25）/ `mc_kit_*`（游戏外辅助，3）/ `mc_admin_*`（管理，1）/ `mc_debug_*`（调试，2）。
 > 可见性按模式分档（2026-10-04）：**MC模式** 只见 mc/mckit + 文件工具；**MC+模式** 全量可见（含 admin）；
 > **其他模式** 隐藏 mc_* / mc_kit_*（仅保留 `mc_admin_*`），另有 guard 硬拒兜底。
+> 🔴 **调试工具（`mc_debug_*`）另受「MC设置 → 调试」的 `exposeDebugTools` 开关门控**（2026-10-05）：关时在 MC/MC+ 也不暴露（白名单 / MC+ deny / guard 三处）。
 
 ## 通用约定
 
@@ -14,25 +15,27 @@
 
 ---
 
-## 一、连接与会话（10）
+## 一、连接与会话（8）
 
 | 工具 | 职责 | 关键点 |
 | --- | --- | --- |
-| `mc_status` | 当前会话状态 | modeView（online/ghost/reconnecting/reconnectPending/sub/connection/pendingEvents/watch）+ 最近聊天 |
-| `mc_lan` | 找**局域网房间** | **只听**原版多播公告（`224.0.2.60:4445`，`[MOTD]…[/MOTD][AD]端口[/AD]`）；`seconds` 夹 [1,15] 默认 3，**恒定按时返回**（不扫端口）；多播被挡 → 空结果，请对方直接报地址 |
-| `mc_ping` | **已知地址**的探路 | 发一次 STATUS ping（握手+状态请求），**不登录、不用账户、不进服**；拿通不通/版本/协议号/MOTD/人数/延迟；`timeoutMs` 默认 5s 上限 30s；错误说人话（`ECONNREFUSED`=端口没人听 · `ENOTFOUND`=域名拼错 · 超时=防火墙或 `enable-status=false`）；`subserver` 作 fakeHost 过 HAProxy 类代理 |
-| `mc_connect` | 进服（唯一连接入口） | 参数 `host/port/subserver/version/account`；账户解析 `args.account ?? sess.selectedAccount`；`version` 缺省自动探测；连接后等区块、**自动挂看门狗**（`autoArm`）、`learnName(游戏名)`；`onAuth` 回调把刷新后的 token 火忘持久化（防 Token 过期） |
-| `mc_accounts` | 账户管理（会话内） | `list/search/use/refresh`；`refresh` 走 `bot.authOnly`（只认证不连接）；返回值**永不含密码/token** |
+| `mc_status` | 连接态 | `connection`（host/port/**version**）+ online/lastError/reconnecting/ghost；在线时内联 `mc_context`。**不含**改版前的 modeView/最近聊天（2026-10-05 去掉，待重做） |
+| `mc_lan` | 找**局域网房间** | **只听**原版多播公告（`224.0.2.60:4445`，`[MOTD]…[/MOTD][AD]端口[/AD]`）；`seconds` 夹 [1,15] 默认 3，**恒定按时返回**（不扫端口）；多播被挡 → 空结果，请对方直接报地址。**`mode` 参数已删**（它本来就没被读，2026-10-05） |
+| `mc_ping` | **已知地址**的探路 | 发一次 STATUS ping（握手+状态请求），**不登录、不用账户、不进服**；参数只有 `address`（host[:port]，端口默认 25565）+ `timeoutMs`（默认 5s 上限 30s）；拿通不通/版本/协议号/MOTD/人数/延迟；错误说人话。**`subserver`/`port` 已删**（2026-10-05：地址自带端口；无子服概念） |
+| `mc_connect` | 进服（唯一连接入口） | 参数只有 `address`（host[:port]）+ `account`（innerID）。**不再有 `host/port/subserver/version`**；地址内部 `parseAddress`，握手 serverHost 就用该地址（DNS+Velocity 自行路由）；**版本永远自动探测**；版本不受支持（mineflayer 无该版本协议数据）→ **建连期间快速失败 + 明确版本错误**（不是"连接超时"；另有 spawn 后 `isVersionSupported` 兜底，复用 `src/mcversion.mjs`）；连接后等区块、**自动挂看门狗**、`learnName`；**返回 = `mc_status` 的内容** |
+| `mc_accounts` | 账户管理（会话内） | `list/search/refresh`（**`use` 已删**，2026-10-05）；`refresh` 走 `bot.authOnly`（只认证不连接），`innerID` 缺省用本会话选定/默认；返回值**永不含密码/token** |
 | `mc_disconnect` | 主动退服 | 看门狗 `disarm(notify:true)`（提醒 AI 已不在游戏）+ 优雅 quit |
 | `mc_stop` | 停本会话 | 等价强制停止但 `cancelTurn: false`（**防自我 abort**；HTTP 的 `/api/mc/stop` 用 `cancelTurn:true`） |
-| `mc_sessions` | 列全部会话实例 | 调试用（每会话独立性的直观证据） |
 | `mc_capabilities` | 能力/限制自述 | 报 plugin 版本、mineflayer testedVersions、超时上限、指令白名单等 |
-| `mc_diag` | 诊断快照 | 物理状态/控制位/收包统计/事件队列 + `promptInjection`（提示词投递诊断） |
 
-## 二、观察（5）
+> `mc_sessions` / `mc_diag` 已改名并移入「调试」（见 §七）。
+
+## 二、观察（7）
 
 | 工具 | 职责 | 关键点 |
 | --- | --- | --- |
+| `mc_context` | 游戏上下文 | basic = 模式/维度/坐标/朝向；survival 段（血量/吸收/饱食/饱和/气泡/装备/经验 + buff + 坐骑/骑乘者）——生存/冒险默认给，`survival:true` 强制给。底层 `core.context()` |
+| `mc_players` | 在线玩家 | tab 栏名 / 档案名 / uuid（含自己）。底层 `core.players()` |
 | `mc_map` | 地形图 | `format: chars / image / both`；`image` 渲染真地形图 → 手工 PNG（`encodePng`）→ **图片附件**回给模型；同时落盘 `.whale-craft/.out/`（给 `out` 参数则写发布区） |
 | `mc_scan` | 范围扫描 | 半径 ≤24、高 ≤16；25 类方块计数或按名搜索 |
 | `mc_entities` | 附近实体 | 半径默认 24，返回前 40 |
@@ -73,6 +76,15 @@
 | --- | --- | --- |
 | `mc_admin_config` | 全局配置读写 | `get/set/unset/reset/list` 点号键；改完**立即热生效**（消费方每次过 getter）。**MC 模式会话看不见、也调不动**（白名单隐藏 + guard 硬拒双保险）；普通模式与 **MC+模式** 可见可用（MC+ 系用户 2026-10-04 定）。只含全局键——提示词三开关已下放为**按工作区**（`<工作区>/.whale-craft/config.json`，在「MC设置→提示词」改），不在本工具里 |
 
+## 七、调试（2，`mc_debug_*`）
+
+| 工具 | 职责 | 关键点 |
+| --- | --- | --- |
+| `mc_debug_sessions` | 列全部会话实例 | （原 `mc_sessions`）每会话独立性的直观证据 |
+| `mc_debug_diag` | 诊断快照 | （原 `mc_diag`）物理状态/控制位/收包统计/事件队列 + `promptInjection` |
+
+> 两者受「MC设置 → 调试」的 `exposeDebugTools` 开关门控（默认关）+ **只在 MC/MC+ 模式**暴露；其他模式一律摘掉。
+
 ---
 
 ## 超时基线（`src/core.mjs` → `TIMEOUTS` / `DEFAULTS`）
@@ -91,3 +103,4 @@
 
 - **`mc_kit_share`（及 `mc_map` 的 `share` 参数）已删除**（2026-09-16）：它只是在调宿主**另装**的 `dsh-file-host`，插件本身没有文件服务器。"让用户看到文件"改走：宿主 `present`（显式文件交付）+ 本插件的 `mc_kit_express`。自检里有"mc_kit_share 已移除 / 源码无文件服务器残留"的断言——老名字不要再出现。
 - 文件分享 2026-10-04 起是**开关**（`expressEnabled`），不再有"模式"；老配置里的 `expressMode`（含 `local`）由 `PluginConfig.migrate` 搬成布尔（`online`→`true`，其余→`false`）。
+- **2026-10-05 工具面改动**：① `mc_connect`/`mc_ping` 收成单一 `address`（删 `host/port/subserver/version`；版本永远自动探测，连上后版本不支持则强制断开）② `mc_accounts` 删 `use` ③ `mc_lan` 删 `mode` ④ 新增 `mc_context`/`mc_players` ⑤ `mc_sessions`/`mc_diag` → `mc_debug_sessions`/`mc_debug_diag`（受 `exposeDebugTools` 门控）⑥ `mc_status` 改为"连接态 + 在线内联 context"。工具总数 29 → **31**。

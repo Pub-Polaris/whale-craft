@@ -76,7 +76,7 @@ npm run dev:stop              # 按 pidfile 停实例
 ## 6. 调试技巧
 
 - **日志**：插件日志 `$DSH_HOME/whale_craft/logs/whale-craft.log`（`MC_LOG` 可覆盖；启动时同时进宿主 logger）。自检日志 `logs/selfcheck.log`。
-- **会话内诊断**：`mc_diag`（物理/控制位/收包/事件队列 + `promptInjection` 投递状态）；`mc_watch {action:"log"}` 看看门狗留档；`GET /api/mc/mode?sessionId=` 有注入诊断。
+- **会话内诊断**：`mc_debug_diag`（物理/控制位/收包/事件队列 + `promptInjection` 投递状态；需开启调试开关）；`mc_watch {action:"log"}` 看看门狗留档；`GET /api/mc/mode?sessionId=` 有注入诊断。
 - **真机验收文化**：本项目修 bug 讲究"真机复现 → 修 → 真机验收"（CHANGELOG 每条修复都带现象/根因/修法/验收）。能起本地 MC 服务端就起，别只靠自检。
 - **别信"状态在撒谎"**：历史多次出现"界面/AI/工具三处一起撒谎"（断线后仍显示在游戏中、幽灵在线）。改状态相关代码时，同步核对：`McBot.online`、`McSession.modeView()`、`/api/mc/status`、client 状态条、`mc_events`/看门狗——五处要一致。
 

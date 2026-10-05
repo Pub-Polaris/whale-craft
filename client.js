@@ -533,21 +533,19 @@ select[data-wc-in]{appearance:none;padding-right:22px;
     }
 
     /**
-     * 状态条上要显示的**服务器地址**：`host[:port]`（非默认端口才带端口），
-     * 有子服时再跟一个 `· 子服域名`（Velocity 的 forced-host）。
+     * 状态条上要显示的**服务器地址**：`host[:port]`（非默认端口才带端口）。
      *
      * 🔴 用户 2026-09-16："状态条是不是只显示'在游戏中'？应该显示服务器地址，太长则截断。"
-     *    地址由 `/api/mc/status` 的 `connection` 给（只有 host/port/subserver，**没有账号**）。
-     * @returns {string} 地址；一个都没有就返回空串（此时状态条只显示"在游戏中"）
+     *    地址由 `/api/mc/status` 的 `connection` 给（只有 host/port/version，**没有账号**）。
+     * 🔴 2026-10-05：不再有 `subserver`（用户只填一个 address）——只显示 host[:port]。
+     * @returns {string} 地址；没有就返回空串（此时状态条只显示"在游戏中"）
      */
     function mcAddress(state) {
       const conn = state?.connection ?? null
       const host = String(conn?.host ?? '').trim()
       const port = Number(conn?.port ?? 0) || 0
-      const sub = String(conn?.subserver || state?.sub || '').trim()
-      const endPoint = host ? (port && port !== 25565 ? host + ':' + port : host) : ''
-      if (endPoint && sub && sub !== host) return endPoint + ' · ' + sub
-      return endPoint || sub
+      if (!host) return ''
+      return port && port !== 25565 ? host + ':' + port : host
     }
 
     function McStatusBar(props) {

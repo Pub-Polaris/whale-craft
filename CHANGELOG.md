@@ -31,6 +31,21 @@
 - **提示词适配**：MC+ 会话多投一条「MC+ 模式说明」；`/api/mc/mode`、注入状态与 `mc_diag` 都会报 `mcPlus`，UI 显示「MC+模式」。
 - **引擎范围**：`engines.dsh` 与两个 dsh peer 的下限抬到 `>=0.2.0-rc.2`。
 
+### 🔴 破坏性变更（连接类工具收口：地址只填一个）
+
+- **`mc_connect` / `mc_ping` 只收一个 `address`**（形如 `example.com` 或 `example.com:25566`）——
+  删掉了 `host` / `port` / `subserver` / `version` 参数。**版本永远自动探测**；连上后发现版本不受支持会**自动断开并报错**。
+- **`mc_accounts`** 去掉 `use` 子动作（选账户直接在 `mc_connect {account}` 里指名，或 `refresh` 刷新）。
+- **`mc_lan`** 去掉没有作用的 `mode` 参数。
+
+### 🎉 新增（工具面）
+
+- **`mc_context`**：游戏模式、维度、坐标、朝向；生存/冒险模式下另给血量/吸收/饥饿/装备/经验/buff/坐骑等。
+- **`mc_players`**：在线玩家的 tab 名、档案名、uuid（含自己）。
+- **`mc_status`** 改为"连接态（address/版本/连接状态）+ 在线内联 `mc_context`"。
+- **调试工具**：`mc_sessions` / `mc_diag` 更名为 **`mc_debug_sessions` / `mc_debug_diag`**，受「MC设置 → 调试」的
+  「开放助手调试工具」开关控制（默认关；只在 MC / MC+ 模式、且开关打开时才暴露）。工具总数 29 → **31**。
+
 ### 🔴 修复（干净环境 / 官方 dsh-desktop 安装后 `failed to import`）
 
 - **现象**（GitHub issue #5）：npm 装出来的插件、或官方 dsh-desktop 上，启动只报一句

@@ -1126,6 +1126,10 @@ export function apply(ctx, rawConfig) {
       for (const k of ['commandWhitelist', 'allowAllCommands', 'expressEnabled', 'expressBase', 'exposeDebugTools']) {
         if (body[k] !== undefined) pluginConfig.set(k, body[k])
       }
+      // 调试开关变更 → 立即重算各 MC/MC+ 会话的工具可见性（用户 2026-10-05）
+      if (body.exposeDebugTools !== undefined) {
+        try { refreshMcPolicy() } catch (e) { logLine(`调试开关变更后重算工具策略失败：${e?.message ?? e}`) }
+      }
       const wsPatch = {}
       for (const k of ['injectWhaleCraftAgentsMd', 'injectWorkspaceAgentsMd', 'rulesFollowVersion']) {
         if (body[k] !== undefined) wsPatch[k] = body[k]
@@ -1733,17 +1737,28 @@ export function apply(ctx, rawConfig) {
     return registry.getOrCreate(agent.id)
   }
 
+  /** `mc_status` 的返回体：连接态（address / 版本 / 连接状态）+ 在线时内联 `mc_context`（用户 2026-10-05 定）。 */
+  const mcStatusPayload = (sess) => {
+    const s = sess.bot.status()
+    const base = {
+      online: s.online,
+      connection: s.connection,        // { host, port, version }
+      lastError: s.lastError ?? null,
+      ...(s.reconnecting ? { reconnecting: true } : {}),
+      ...(s.ghost ? { ghost: true, hint: s.hint } : {}),
+    }
+    return s.online ? { ...base, context: sess.bot.context({ survival: false }) } : base
+  }
+
   /* ── 状态与开关 ── */
 
   ctx.tools.register(asTool({
     name: 'mc_status',
-    description: '看我在 Minecraft 里的状态：是否在线、子服、坐标、血量、模式、连接信息、待处理事件数、看门狗状态。',
+    description: '当前会话的连接状态：游戏 address、版本、连接状态；在游戏内时附 `mc_context` 的内容。',
     parameters: {},
     output: text(),
     async execute(args, exec) {
-      const sess = getSession(exec)
-      const s = sess.bot.status()
-      return { ...s, ...sess.modeView(), recentChat: sess.bot.recentChat(5) }
+      return mcStatusPayload(getSession(exec))
     },
   }))
 
@@ -1757,7 +1772,6 @@ export function apply(ctx, rawConfig) {
       + '没听到时：确认对方真的开了"对局域网开放"（或服务端开了 `enable-lan-visibility`）；\n'
       + '有些网络（部分 WiFi / VPN / 容器）会挡多播，那种情况原版客户端自己也看不到——请直接问对方地址。',
     parameters: {
-      mode:    { type: 'string', description: '探测模式。目前只有 `broadcast`（默认）：听局域网公告' },
       seconds: { type: 'number', description: '听多久（默认 3 秒，上限 15）' },
     },
     output: text(),
@@ -1785,46 +1799,37 @@ export function apply(ctx, rawConfig) {
       + '连不上时它会把原因说成人话（ECONNREFUSED=端口没人听 / ENOTFOUND=域名拼错 / 超时=防火墙或 enable-status=false）。\n'
       + '和 `mc_lan` 的分工：`mc_lan` 是"不知道地址"时听局域网公告；`mc_ping` 是"知道地址"时主动探一次。',
     parameters: {
-      address:   { type: 'string', description: '地址，认 `example.com` / `example.com:25566` / `[::1]:25565`（必填）' },
-      port:      { type: 'number', description: '端口（默认 25565）；address 里已经带 `:端口` 时以 address 为准' },
+      address:   { type: 'string', description: '地址，认 `example.com` / `example.com:25566` / `[::1]:25565`（必填；端口写在 address 里，默认 25565）' },
       timeoutMs: { type: 'number', description: '超时（默认 5000，上限 30000）——超时就是这个工具的硬顶，不会更久' },
-      subserver: { type: 'string', description: '（可选）Velocity 之类的子服域名：握手里的 serverHost 用它路由到子服，如 mc.example.com' },
     },
     output: text(),
     async execute(args) {
-      const { host, port } = parseAddress(args.address, Number(args.port) || 25565)
+      const { host, port } = parseAddress(args.address, 25565)
       const timeoutMs = Number(args.timeoutMs) || 5000
-      const r = await statusPing({ host, port, timeoutMs, fakeHost: args.subserver ? String(args.subserver) : '' })
-      // 通了但版本表里没有对应话术的情况也用得上：把"能不能连"与"连上会怎样"分开说
-      return r
+      return statusPing({ host, port, timeoutMs })
     },
   }))
 
   ctx.tools.register(asTool({
     name: 'mc_connect',
-    description: '连接到 MC 服务器。**这里没有账号密码**——用哪个账户由「MC设置」里维护的账户决定：\n'
-      + '先用 `mc_accounts` 看有哪些账户（用 `action:"use"` 选定，或用本工具的 `account` 参数指名 innerID）。\n'
-      + '服务器地址/端口/子服由你传（不传就用插件配置里的 fallback）；连接成功后会等区块加载完成。\n'
-      + '登录失败时会明确说"需要用户处理"——那就告诉用户去「MC设置」里重新登录或点「刷新」。',
+    description: '连接到 MC 服务器（**唯一连接入口**）。这里没有账号密码——用哪个账户由「MC设置」里维护的账户决定：\n'
+      + '先用 `mc_accounts` 看有哪些账户（或用本工具的 `account` 参数指名 innerID）。\n'
+      + '地址只填一个 `address`（host[:port]，端口默认 25565）——版本**自动探测**，不用传。\n'
+      + '连接成功后会等区块加载完成，返回 `mc_status` 的内容；连不上或版本不受支持会报错。',
     parameters: {
-      host:      { type: 'string', description: '服务器地址（如 example.com）' },
-      port:      { type: 'number', description: '端口（默认 25565）' },
-      subserver: { type: 'string', description: '子服域名（Velocity fakeHost 路由，如 mc.example.com）' },
-      account:   { type: 'string', description: '（可选）用哪个账户：innerID（mc_accounts 里能看到）；不传就用本会话选定的/默认账户' },
-      version:   { type: 'string', description: 'MC 版本（如 1.20.4 / 1.21.4）。**默认不传 = 自动探测**（发 STATUS ping 按服务端上报的协议号反查），这是推荐用法；只有探测失败时才手填。' },
+      address: { type: 'string', required: true, description: '服务器地址（如 example.com / example.com:25566；端口默认 25565）' },
+      account: { type: 'string', description: '（可选）用哪个账户：innerID（mc_accounts 里能看到）；不传就用本会话选定的/默认账户' },
     },
     output: text(),
     async execute(args, exec) {
       const sess = getSession(exec)
+      const { host, port } = parseAddress(args.address, 25565)
+      if (!host) throw new Error('address 不能为空（形如 example.com 或 example.com:25566）')
       const innerID = args.account ? String(args.account) : (sess.selectedAccount ?? null)
       const resolved = await resolveAuth(innerID)
       sess.selectedAccount = resolved.innerID
 
-      const opts = { auth: resolved.auth }
-      if (args.host)      opts.host      = String(args.host)
-      if (args.port)      opts.port      = Number(args.port)
-      if (args.subserver) opts.subserver = String(args.subserver)
-      if (args.version)   opts.version   = String(args.version)
+      const opts = { auth: resolved.auth, host, port }
       // 登录成功后把（皮肤站的）档案信息与新令牌回写；回调只活在插件层，不进工具返回值
       // ⚠️ 回写是"顺带"的事：失败只能记日志，**绝不能**变成未处理拒绝（那会 exit(1)）
       opts.onAuth = ({ profile, session }) => {
@@ -1839,7 +1844,7 @@ export function apply(ctx, rawConfig) {
         throw withUserHint(e, resolved.label)
       }
       sess.mode = 'active'
-      const ready = await sess.bot.waitForChunks()
+      await sess.bot.waitForChunks()
       // 进服自动挂看门狗（用户要求：进游戏自动打开）
       const wd = ensureWatchdog(ctx, sess, exec?.agent, promptAbort.signal, watchdogGate(sess))
       // 把自己的游戏名学进叫法（默认叫法里**没有**私人名字 —— 见 learnName 的注释）
@@ -1847,29 +1852,22 @@ export function apply(ctx, rawConfig) {
       if (wd.config.autoArm && !wd.armed) {
         try { wd.arm() } catch (e) { ctx.logger?.warn?.(`[whale_craft] 看门狗自动挂载失败：${e.message}`) }
       }
-      return {
-        connected: true,
-        account: accounts.view(accounts.get(resolved.innerID)),
-        ...sess.bot.status(), chunksReady: ready,
-        // 连接信息（host/port/子服）已在 status() 里；这里**不再**回带
-        // `_connectionProfile`（那份含 authMode 与账号名，没必要发出去）。
-        watchdog: wd.status().armed ? '已自动挂载' : '未挂载（autoArm 关闭）',
-      }
+      // 连接完成 → 返回 mc_status 的内容（用户 2026-10-05 定）
+      return mcStatusPayload(sess)
     },
   }))
 
   ctx.tools.register(asTool({
     name: 'mc_accounts',
-    description: '【账户】列出 / 搜索 / 刷新 / 选定 MC 账户。**永远拿不到密码或 token**——只有基本信息。\n'
+    description: '【账户】列出 / 搜索 / 刷新 MC 账户。**永远拿不到密码或 token**——只有基本信息。\n'
       + 'action：\n'
       + '· list（默认）列出所有账户：innerID / ID / 游戏名 / UUID / 类型（离线或皮肤站）/ 服务器名与地址 / 是否已存凭据\n'
       + '· search  按指令搜（名字、UUID、服务器名、登录账号都行）：给 query\n'
-      + '· use     选定本会话要用的账户：给 innerID（之后 mc_connect 就用它）\n'
       + '· refresh 刷新某个账户的登录状态（皮肤站会去认证服换新令牌）：innerID 不传就用当前选定/默认的\n'
       + '⚠️ 刷新或登录失败时会带 needUserAction——**这时候要明确告诉用户**：请到「MC设置」里重新登录该账户，'
       + '或点它的「刷新」按钮（密码只有用户能填，你拿不到）。',
     parameters: {
-      action:  { type: 'string', description: 'list（默认）/ search / use / refresh' },
+      action:  { type: 'string', description: 'list（默认）/ search / refresh' },
       innerID: { type: 'string', description: '账户内部 id（list 里能看到，形如 acc-xxxxxxxx）' },
       query:   { type: 'string', description: 'search 的关键词' },
     },
@@ -1887,18 +1885,6 @@ export function apply(ctx, rawConfig) {
         }
       }
       if (action === 'search') return accounts.search(args.query)
-
-      if (action === 'use') {
-        const id = String(args.innerID ?? '').trim()
-        if (!id) throw new Error('use 要给 innerID（先 action:"list" 看看有哪些账户）')
-        const acc = accounts.get(id)
-        if (!acc) throw new Error(`没有这个账户：${id}`)
-        sess.selectedAccount = id
-        return {
-          selected: accounts.view(acc),
-          note: '本会话之后 mc_connect 就用这个账户（要进服请再调 mc_connect）',
-        }
-      }
 
       if (action === 'refresh') {
         const innerID = args.innerID ? String(args.innerID) : (sess.selectedAccount ?? accounts.resolve()?.innerID ?? null)
@@ -1924,7 +1910,7 @@ export function apply(ctx, rawConfig) {
         }
       }
 
-      throw new Error(`未知 action："${action}"（可用 list/search/use/refresh）`)
+      throw new Error(`未知 action："${action}"（可用 list/search/refresh）`)
     },
   }))
 
@@ -2068,6 +2054,7 @@ export function apply(ctx, rawConfig) {
             mc_: '游戏内',
             mc_kit_: '游戏外辅助（记忆/画图/交付）',
             mc_admin_: '管理（MC 模式看不见也调不动；普通模式与 MC+ 模式可见）',
+            mc_debug_: '调试（需在「MC设置 → 调试」开启「开放助手调试工具」才在 MC/MC+ 暴露）',
             note: 'mc_* / mc_kit_* 只在 MC模式 / MC+模式 会话里暴露（其他模式隐藏 + guard 硬拒）。',
           },
           count: ourToolNames.length,
@@ -2099,8 +2086,8 @@ export function apply(ctx, rawConfig) {
   }))
 
   ctx.tools.register(asTool({
-    name: 'mc_sessions',
-    description: '列出当前所有活跃的 MC 会话实例（诊断用：确认各会话的 bot 状态、连接信息）。',
+    name: 'mc_debug_sessions',
+    description: '【调试】列出当前所有活跃的 MC 会话实例（确认各会话的 bot 状态、连接信息）。',
     parameters: {},
     output: text(),
     async execute() {
@@ -2165,6 +2152,32 @@ export function apply(ctx, rawConfig) {
   }))
 
   /* ── 世界读取 ── */
+
+  ctx.tools.register(asTool({
+    name: 'mc_context',
+    description: '获取游戏上下文：游戏模式、所在维度、坐标、朝向。'
+      + 'survival 段（生命值/伤害吸收/饱食度/饱和度/气泡值/装备/经验等级与经验值、所有 buff 及等级与时长、坐骑/骑乘者）'
+      + '在生存/冒险模式默认返回；`survival:true` 可强制返回。',
+    parameters: {
+      survival: { type: 'boolean', description: 'true = 强制返回 survival 段（默认按游戏模式决定：生存/冒险给，其余不给）' },
+    },
+    output: text(),
+    async execute(args, exec) {
+      const sess = getSession(exec)
+      return sess.bot.context({ survival: args.survival === true })
+    },
+  }))
+
+  ctx.tools.register(asTool({
+    name: 'mc_players',
+    description: '获取在线玩家的 tab 栏名、档案名、uuid（包括自己）。',
+    parameters: {},
+    output: text(),
+    async execute(args, exec) {
+      const sess = getSession(exec)
+      return sess.bot.players()
+    },
+  }))
 
   ctx.tools.register(asTool({
     name: 'mc_scan',
@@ -3887,7 +3900,22 @@ export function apply(ctx, rawConfig) {
     //    这条日志只是"模式已生效"的标记；真投出去时 `reconcileNotices` 自己会记一行。
     logLine(`${isPlus ? 'MC+ 模式' : 'MC 模式'}生效（preset=${id ?? '?'}，${agent.id}）提示词将在首次请求组装前投递`)
 
-    if (isPlus) return   // MC+：不套白名单（见上面注释）；guard 对它只保留凭据路径拒绝
+    // MC+：不套白名单（见上面注释）；guard 对它只保留凭据路径拒绝。
+    // 🔴 但调试工具未启用时要**从可见面摘掉**（用户 2026-10-05：debug 只在开启后暴露在 MC/MC+）。
+    if (isPlus) {
+      if (!pluginConfig.exposeDebugTools) {
+        const debugNames = ourToolNames.filter((n) => n.startsWith('mc_debug_'))
+        if (debugNames.length) {
+          try {
+            const t = scopedTools(agent.ctx)
+            if (t) mcRestrictRelease.set(agent, t.restrict({ deny: debugNames }))
+          } catch (e) {
+            logLine(`MC+ 模式：隐藏调试工具失败（${String(e?.message).slice(0, 160)}）—— guard 仍会硬拒`)
+          }
+        }
+      }
+      return
+    }
 
     // ② 工具可见性：**白名单**（用户 2026-09-16 真机投诉："这个 agent 怎么还能用 pwsh！不是只暴露我们指定的工具吗！"）
     //
@@ -3901,8 +3929,11 @@ export function apply(ctx, rawConfig) {
       if (!t) { logLine('MC 模式：拿不到 scoped tools，跳过可见性限制（guard 仍会硬拒）'); return }
       const { allowOtherTools, hideAdminTools } = pluginConfig.mcMode
       const adminNames = ourToolNames.filter((n) => n.startsWith('mc_admin_'))
+      // 调试工具（mc_debug_*）只在「MC设置 → 调试」开关打开时才进可见面（用户 2026-10-05 定）
+      const exposeDebug = pluginConfig.exposeDebugTools
+      const hidden = (n) => n.startsWith('mc_admin_') || (!exposeDebug && n.startsWith('mc_debug_'))
       const wanted = [
-        ...ourToolNames.filter((n) => !n.startsWith('mc_admin_')),
+        ...ourToolNames.filter((n) => !hidden(n)),
         ...(hideAdminTools ? [] : adminNames),
         ...MC_FILE_TOOLS,
         MC_PRESENT_TOOL,
@@ -3932,6 +3963,19 @@ export function apply(ctx, rawConfig) {
       logLine(`MC 模式：工具白名单已生效（${agent.id}）：${allow.join(', ')}`)
     } catch (e) {
       logLine(`MC 模式工具白名单**没生效**（${String(e?.message).slice(0, 160)}）—— 管理工具与文件越界仍由 guard 兜底`)
+    }
+  }
+
+  /**
+   * 配置（`exposeDebugTools`）变了 → 强制重算所有 MC/MC+ 会话的工具可见性。
+   * `applyMcModePolicy` 有"kind 没变就不动"的幂等；这里先清缓存再跑，才会真的重套（用户 2026-10-05）。
+   */
+  const refreshMcPolicy = () => {
+    for (const id of mcModeAgentIds) {
+      const a = safeAgentById(id)
+      if (!a) continue
+      mcPolicyKind.delete(a)
+      try { applyMcModePolicy(a) } catch (e) { logLine(`重算工具策略失败（${id}）：${e?.message ?? e}`) }
     }
   }
 
@@ -4009,6 +4053,11 @@ export function apply(ctx, rawConfig) {
       // ② 管理工具：MC 模式一律拒绝（隐藏之外再上一道硬锁）
       if (name.startsWith('mc_admin_')) {
         return 'MC 模式会话不能读取或修改 whale_craft 配置——请在普通会话里用 mc_admin_config 改。'
+      }
+
+      // ②′ 调试工具：开关没开就硬拒（防 restrict 没套上；用户 2026-10-05）
+      if (name.startsWith('mc_debug_') && !pluginConfig.exposeDebugTools) {
+        return '调试工具未启用——请在「MC设置 → 调试」里打开「开放助手调试工具」。'
       }
 
       if (/^(read|edit|write|glob|grep|ls|cat|read_image|mc_kit_memory)$/i.test(name)) {
@@ -4229,8 +4278,8 @@ export function apply(ctx, rawConfig) {
   /* ── 诊断 ── */
 
   ctx.tools.register(asTool({
-    name: 'mc_diag',
-    description: '诊断：当前会话的机器人内部状态（物理/控制位/收包/事件队列）——排查"走不动/收不到消息"用。'
+    name: 'mc_debug_diag',
+    description: '【调试】诊断：当前会话的机器人内部状态（物理/控制位/收包/事件队列）——排查"走不动/收不到消息"用。'
       + '同时报**提示词注入状态**（`promptInjection`：三段提示词各自会不会注入、为什么不会）。',
     parameters: {},
     output: text(),

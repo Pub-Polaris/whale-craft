@@ -268,11 +268,15 @@ console.log('\n--- 工具面（share 移除 / present 接入）---')
   const { readFileSync } = await import('node:fs')
   const idx = readFileSync(new URL('./index.js', import.meta.url), 'utf8')
   console.log(`  ${!tools.has('mc_kit_share') ? '✅' : '❌'} 🔴 mc_kit_share 已移除（它只是在调宿主**另装**的 dsh-file-host，插件本身没有文件服务器）`)
-  console.log(`  ${tools.size === 29 ? '✅' : '❌'} 工具数 29（实际 ${tools.size}）：mc_* 25 + mc_kit_* 3 + mc_admin_* 1`)
+  console.log(`  ${tools.size === 31 ? '✅' : '❌'} 工具数 31（实际 ${tools.size}）：mc_* 25 + mc_kit_* 3 + mc_admin_* 1 + mc_debug_* 2`)
   // 只看**代码**，不看注释：注释里留着"为什么删"的说明（那是要留的）
   const codeOnly = idx.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
   console.log(`  ${!/uploadToFileHost|dsh-file-host|\/serve\/file-host|mc_kit_share/.test(codeOnly) ? '✅' : '❌'} 源码里没有上传/文件服务器残留（注释里保留"为什么删"的说明）`)
   console.log(`  ${tools.has('mc_kit_image') && tools.has('mc_kit_memory') ? '✅' : '❌'} mc_kit_image / mc_kit_memory 仍在（一个渲染 PNG、一个记忆语义层）`)
+  // 2026-10-05：新增观察工具 + 诊断工具改名进 mc_debug_*
+  console.log(`  ${tools.has('mc_context') && tools.has('mc_players') ? '✅' : '❌'} 新增观察工具 mc_context / mc_players`)
+  console.log(`  ${tools.has('mc_debug_sessions') && tools.has('mc_debug_diag') && !tools.has('mc_sessions') && !tools.has('mc_diag') ? '✅' : '❌'} 🔴 mc_sessions/mc_diag 已改名 mc_debug_sessions / mc_debug_diag`)
+  console.log(`  ${/startsWith\('mc_debug_'\)/.test(codeOnly) && /exposeDebugTools/.test(codeOnly) ? '✅' : '❌'} 🔴 调试工具受 exposeDebugTools 门控（白名单 / MC+ deny / guard 三处）`)
   console.log(`  ${/MC_PRESENT_TOOL = 'present'/.test(idx) && /^\s+MC_PRESENT_TOOL,$/m.test(idx) ? '✅' : '❌'} present 已进 MC 模式白名单`)
   console.log(`  ${/MC_PRESET_TOOL_GROUPS/.test(idx) && /availableToolGroups\(\)/.test(idx) ? '✅' : '❌'} 复制/重建 preset 时会补齐 MC 模式需要的工具组（tool-fs / tool-jobs / present）`)
   console.log(`  ${/const ensureToolGroupsInPreset/.test(idx) && /ensureToolGroupsInPreset\(svc, existingId\)/.test(idx) ? '✅' : '❌'} 🔴 **已存在的** preset（含本机手写那份）也会被补齐那几组（不动别的行）`)
@@ -304,7 +308,7 @@ console.log('\n--- 工具面（share 移除 / present 接入）---')
 /** 造一个假的 exec（带会话身份），工具靠它路由到各自的实例 */
 const execAs = (id) => ({ agent: { id } })
 
-// ── 实例分离验证：靠 mc_diag 的 connection/stats 看不出来，改用 mc_sessions 列实例 ──
+// ── 实例分离验证：靠 mc_debug_diag 的 connection/stats 看不出来，改用 mc_debug_sessions 列实例 ──
 console.log('\n--- 每会话实例分离 ---')
 const A = execAs('sess-A')
 const B = execAs('sess-B')
@@ -313,7 +317,7 @@ await tools.get('mc_status').execute({}, A)
 await tools.get('mc_status').execute({}, A)   // 同一会话再来一次，应复用
 await tools.get('mc_status').execute({}, B)
 
-const sess = await tools.get('mc_sessions').execute({}, A)
+const sess = await tools.get('mc_debug_sessions').execute({}, A)
 console.log('  活跃实例:', JSON.stringify(sess.sessions.map((s) => s.agentId)))
 const ids = sess.sessions.map((s) => s.agentId).sort().join(',')
 if (ids === 'sess-A,sess-B') console.log('  ✅ 两个会话各自一个独立实例（互不干扰）')
@@ -1211,10 +1215,10 @@ console.log('\n--- status：服务器地址 ---')
 {
   const { McBot } = await import('./src/core.mjs')
   const b = new McBot({ instanceId: 'sc-status-' + Math.random().toString(36).slice(2, 7) })
-  b._connectionProfile = { host: 'example.com', port: 25566, subserver: 'mc.example.com', version: '1.21.4', authMode: 'offline', account: '<user>' }
+  b._connectionProfile = { host: 'example.com', port: 25566, version: '1.21.4', authMode: 'offline', account: '<user>' }
   const offline = b.status()
-  console.log(`  ${offline.online === false && offline.connection?.host === 'example.com' && offline.connection?.port === 25566 && offline.connection?.subserver === 'mc.example.com' ? '✅' : '❌'} 离线时也给地址（host/port/subserver）：${JSON.stringify(offline.connection ?? null)}`)
-  console.log(`  ${!/account|authMode|version/.test(JSON.stringify(offline.connection ?? {})) ? '✅' : '❌'} 🔴 地址里**不带账号/认证模式**（凭据绝不外流）`)
+  console.log(`  ${offline.online === false && offline.connection?.host === 'example.com' && offline.connection?.port === 25566 && offline.connection?.version === '1.21.4' ? '✅' : '❌'} 离线时也给地址（host/port/version）：${JSON.stringify(offline.connection ?? null)}`)
+  console.log(`  ${!/account|authMode/.test(JSON.stringify(offline.connection ?? {})) ? '✅' : '❌'} 🔴 地址里**不带账号/认证模式**（凭据绝不外流）`)
   b.bot = { entity: { position: { x: 1, y: 2, z: 3 }, yaw: 0, pitch: 0, isInWater: false }, game: {}, time: {}, players: {}, health: 20, food: 20 }
   const online = b.status()
   console.log(`  ${online.online === true && online.connection?.host === 'example.com' ? '✅' : '❌'} 在线时同样带地址（前端据此显示）`)
@@ -2130,7 +2134,12 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     console.log(`  ${stdDeny && stdDeny.f.allow === undefined ? '✅' : '❌'} 非 MC 模式的会话套的是 **deny**（不是白名单）：宿主工具面不受影响`)
     console.log(`  ${stdDeny && stdDeny.f.deny.includes('mc_status') && stdDeny.f.deny.includes('mc_kit_memory') ? '✅' : '❌'} deny 里含 mc_* / mc_kit_*（从可见面摘掉）`)
     console.log(`  ${stdDeny && !stdDeny.f.deny.includes('mc_admin_config') && stdDeny.f.deny.every((n) => n.startsWith('mc_')) ? '✅' : '❌'} 🔴 deny 里**不含** mc_admin_*、也不含任何非 mc 工具（不误伤普通会话）`)
-    console.log(`  ${restrictCalls.every((c) => c.preset !== 'minecraft-plus') ? '✅' : '❌'} 🔴 MC+ 模式**不套任何 restrict**（标准工具全量 + mc/mckit 全量）`)
+    // 2026-10-05：MC+ 仍**不套白名单**（标准工具 + mc/mckit 全量）；只在调试开关关时 deny 掉 mc_debug_*
+    const plusCalls = restrictCalls.filter((c) => c.preset === 'minecraft-plus')
+    const plusAllow = plusCalls.some((c) => Array.isArray(c.f?.allow))
+    const plusDeny = plusCalls.find((c) => Array.isArray(c.f?.deny))?.f?.deny ?? []
+    console.log(`  ${!plusAllow ? '✅' : '❌'} 🔴 MC+ 模式**不套白名单**（标准工具全量 + mc/mckit 全量可见）`)
+    console.log(`  ${plusDeny.length > 0 && plusDeny.every((n) => n.startsWith('mc_debug_')) ? '✅' : '❌'} 🔴 MC+ 只在「调试开关关」时 deny 调试工具（${plusDeny.join(', ') || '无'}）`)
   }
   // 🔴 2026-09-18 去重（新挂载点）：同一个 MC 会话**每一轮**都会走到 pre-step，
   //    但提示词只该进一次 —— 幂等靠"按 preset 记账 + 会话日志回读"。
@@ -2573,15 +2582,13 @@ console.log('\n--- MC账户：账户库 / 凭据隔离 / 工具 ---')
   const accList = await tools.get('mc_accounts').execute({ action: 'list' }, A)
   console.log(`  ${Array.isArray(accList.accounts) && accList.accounts.length >= 1 ? '✅' : '❌'} mc_accounts{list} 可用（${accList.accounts?.length} 个账户，凭据服务 ${accList.credentialsReady ? '可用' : '不可用'}）`)
   console.log(`  ${!/password|authPass|accessToken|clientToken|"token"/i.test(JSON.stringify(accList)) ? '✅' : '❌'} 🔴 mc_accounts 返回里没有任何凭据字段`)
-  const chosen = await tools.get('mc_accounts').execute({ action: 'use', innerID: accList.accounts[0].innerID }, A)
-  console.log(`  ${chosen.selected?.innerID === accList.accounts[0].innerID ? '✅' : '❌'} mc_accounts{use} 选定账户`)
-  const badUse = await tools.get('mc_accounts').execute({ action: 'use', innerID: 'acc-00000000' }, A).catch((e) => e.message)
-  console.log(`  ${/没有这个账户/.test(String(badUse)) ? '✅' : '❌'} 选不存在的账户报错清晰`)
+  const chosen = await tools.get('mc_accounts').execute({ action: 'use', innerID: accList.accounts[0].innerID }, A).catch((e) => e.message)
+  console.log(`  ${/未知 action/.test(String(chosen)) ? '✅' : '❌'} 🔴 mc_accounts{use} 已移除（未知 action 报错；用户 2026-10-05）`)
   const searchTool = await tools.get('mc_accounts').execute({ action: 'search', query: 'DeepSeek' }, A)
   console.log(`  ${searchTool.matched >= 1 ? '✅' : '❌'} mc_accounts{search} 可用（命中 ${searchTool.matched}）`)
   const refreshOffline = await tools.get('mc_accounts').execute({ action: 'refresh' }, A)
   console.log(`  ${/离线/.test(String(refreshOffline.note ?? '')) ? '✅' : '❌'} 离线账户"刷新"= 说明不需要认证`)
-  const ghost = await tools.get('mc_connect').execute({ host: 'mc.example', account: 'acc-00000000' }, A).catch((e) => e.message)
+  const ghost = await tools.get('mc_connect').execute({ address: 'mc.example', account: 'acc-00000000' }, A).catch((e) => e.message)
   console.log(`  ${/没有这个账户/.test(String(ghost)) ? '✅' : '❌'} mc_connect 指名不存在的账户报错清晰`)
 }
 
@@ -3478,16 +3485,25 @@ console.log('\n--- 放置可行性判据 ---')
 // ── mc_connect 必须接受全部连接参数（工具化，不再强绑服务器）──
 console.log('\n--- mc_connect 参数面 ---')
 // defineTool 会把 parameters 归一成 JSON Schema，真正的参数在 .properties 里
-// 2026-09-16：凭据参数（authUrl/authUser/authPass）**已从 mc_connect 移除**（LLM 不得接触）；
-// 改成 host/port/subserver/version + account（innerID，账户在「MC设置」里维护）
+// 2026-10-05（用户定）：凭据参数早已移除；连接参数收成单一 `address` + `account`
+// （host/port/subserver/version 全部移除——地址自带端口，版本永远自动探测，无子服概念）
 const raw = tools.get('mc_connect').parameters ?? {}
 const cp = Object.keys(raw.properties ?? raw)
-const need = ['host', 'port', 'subserver', 'account', 'version']
-const gone = ['authUrl', 'authUser', 'authPass']
+const need = ['address', 'account']
+const gone = ['authUrl', 'authUser', 'authPass', 'host', 'port', 'subserver', 'version']
 const missing = need.filter((k) => !cp.includes(k))
 const leaked = gone.filter((k) => cp.includes(k))
 console.log(missing.length ? `  ❌ 缺少参数：${missing.join(', ')}` : `  ✅ 连接参数齐全：${cp.join(', ')}`)
-console.log(leaked.length ? `  ❌ 凭据参数又回来了：${leaked.join(', ')}` : '  ✅ mc_connect 上没有 authUrl/authUser/authPass（凭据只在服务端）')
+console.log(leaked.length ? `  ❌ 已移除的参数又回来了：${leaked.join(', ')}` : '  ✅ mc_connect 只有 address/account（无凭据、无 host/port/subserver/version）')
+{
+  // 🔴 2026-10-05：版本不受支持时 mineflayer 在 spawn 前 async 抛 "No data available for version X"，
+  //    必须快速失败并映射成明确错误——否则表层报成误导性的"连接超时"（真机 26.2 服务器）。
+  const { readFileSync } = await import('node:fs')
+  const coreSrc = readFileSync(new URL('./src/core.mjs', import.meta.url), 'utf8')
+  const fastFail = /b\.on\('error', onErr\)/.test(coreSrc) && /b\.on\('end', onEnd\)/.test(coreSrc)
+  const mapped = /No data available for version/.test(coreSrc)
+  console.log(`  ${fastFail && mapped ? '✅' : '❌'} 🔴 版本不受支持：建连期间快速失败 + 映射为明确版本错误（不是"连接超时"）`)
+}
 
 // ── 客户端 bundle 静态断言（防误删/防回退；真机渲染仍要浏览器里看）──
 // ── 局域网探测（mc_lan）：纯函数 + **真在回环上跑一遍协议** ──
@@ -3545,11 +3561,11 @@ console.log('\n--- 局域网探测（mc_lan）---')
     console.log(`  ${dt1 < 16000 ? '✅' : '❌'} seconds 再大也被夹到 15 秒上限（实测 ${dt1}ms）`)
   }
 
-  // ⑥ 工具面：注册了、参数只剩广播那两个（扫段的参数必须消失）
+  // ⑥ 工具面：注册了、参数只剩 seconds（`mode` 已于 2026-10-05 移除）
   const lanDef = tools.get('mc_lan')
   console.log(`  ${lanDef ? '✅' : '❌'} 注册了 mc_lan 工具`)
   const lanParams = Object.keys(lanDef?.parameters?.properties ?? lanDef?.parameters ?? {})   // defineTool 归一成 JSON Schema，真参数在 .properties
-  console.log(`  ${lanParams.length === 2 && ['mode', 'seconds'].every((k) => lanParams.includes(k)) ? '✅' : '❌'} 参数只剩广播（${lanParams.join(', ')}）`)
+  console.log(`  ${lanParams.length === 1 && lanParams.includes('seconds') ? '✅' : '❌'} 参数只剩 seconds（${lanParams.join(', ')}）`)
   const scanParams = ['subnet', 'ports', 'timeoutMs', 'pingTimeoutMs', 'includeSelf'].filter((k) => lanParams.includes(k))
   console.log(`  ${scanParams.length === 0 ? '✅' : '❌'} 扫段参数已从工具面移除（${scanParams.length ? '还在：' + scanParams.join(', ') : '没有 subnet/ports/timeoutMs/pingTimeoutMs/includeSelf'}）`)
   const lanDefault = await tools.get('mc_lan').execute({ seconds: 1 }, A)
@@ -3634,7 +3650,7 @@ console.log('\n--- 单地址探测（mc_ping）---')
   const pingDef = tools.get('mc_ping')
   console.log(`  ${pingDef ? '✅' : '❌'} 注册了 mc_ping 工具`)
   const pingParams = Object.keys(pingDef?.parameters?.properties ?? pingDef?.parameters ?? {})
-  const wantParams = ['address', 'port', 'timeoutMs', 'subserver']
+  const wantParams = ['address', 'timeoutMs']
   console.log(`  ${wantParams.every((k) => pingParams.includes(k)) ? '✅' : '❌'} 参数齐（${pingParams.join(', ')}）`)
   const pingOut = await tools.get('mc_ping').execute({ address: '127.0.0.1:1', timeoutMs: 2000 }, A)
   console.log(`  ${pingOut?.ok === false && pingOut?.code === 'ECONNREFUSED' ? '✅' : '❌'} 工具路径也不抛异常、原样回 ok:false（${pingOut?.code}）`)
@@ -3814,7 +3830,8 @@ console.log('\n--- 客户端 bundle（client.js 静态检查）---')
     ['提示词那页就叫「提示词」（不写"行事准则"）', /label: '提示词'/.test(code) && !/行事准则/.test(code)],
     ['强制停止的 tooltip 说人话（不写四步实现）', !/先停 LLM/.test(code)],
     // 🔴 用户 2026-09-16："状态条是不是只显示'在游戏中'？应该显示服务器地址，太长则截断。"
-    ['状态条显示服务器地址（host[:port] · 子服）', /function mcAddress\(state\)/.test(code) && /conn\?\.host/.test(code) && /conn\?\.subserver/.test(code)],
+    // 🔴 2026-10-05：不再有 subserver（用户只填一个 address）——只显示 host[:port]
+    ['状态条显示服务器地址（host[:port]）', /function mcAddress\(state\)/.test(code) && /conn\?\.host/.test(code) && !/subserver/.test(code)],
     ['地址太长就截断（完整地址留在 tooltip）', /address\.length > 26 \? address\.slice\(0, 25\) \+ '…'/.test(code) && /'data-mc-sub': '', title: address/.test(code)],
     ['CSS 也兜一层截断（max-width + ellipsis）', /\[data-mc-sub\]\{[^}]*max-width:24ch[^}]*text-overflow:ellipsis/.test(code)],
     ['拿不到地址就只显示"在游戏中"（不硬编造一个"—"）', /address \? React\.createElement\('span', \{ 'data-mc-sub'/.test(code)],
@@ -3849,7 +3866,7 @@ console.log('\n--- 客户端 bundle（client.js 静态检查）---')
     ['页面显示"当前内容对应哪个版本"', /当前内容对应：\$\{rulesVersion \? `v\$\{rulesVersion\}` : '未知（还没同步过）'\}/.test(code)],
     ['开关一拨就存（乐观更新 + 失败回滚）', /run\('cfg:follow', \(\) => apiPatch\(withSid\('\/api\/mc\/config'\), \{ rulesFollowVersion: next === true \}\)/.test(code) && /if \(!ok\) setFollowVersion\(prev\)/.test(code)],
     ['页面上能看见发布区目录与大小', /data-wc-hint/.test(code) && /share\.files\} 个文件/.test(code) && /fmtBytes/.test(code)],
-    // 地址只能走 connectionView()（host/port/subserver）；`_connectionProfile` 还带账号名，别发到浏览器
+    // 地址只能走 connectionView()（host/port/version）；`_connectionProfile` 还带账号名，别发到浏览器
     ['后端只把 connectionView() 发给前端（不发含账号的 _connectionProfile）', !/connection: (sess|this)\.bot\._connectionProfile/.test(readFileSync(new URL('./index.js', import.meta.url), 'utf8'))],
   ]
   // ── 「创建MC+分支」（2026-10-05）：消息操作行加一个立方体按钮 → fork + 把新会话改成 MC+ ──
@@ -4018,7 +4035,7 @@ console.log('\n--- 宿主包缺省：内置 defineTool（tool-def.mjs）---')
 {
   console.log(`  ℹ️ 工具定义来源 kind=${toolDef.toolDefKind()}${toolDef.loadNote ? '（' + toolDef.loadNote + '）' : ''}`)
 
-  // A1：与宿主编译器逐字对拍（代表性 spec 覆盖 29 个工具实际用到的全部形态）
+  // A1：与宿主编译器逐字对拍（代表性 spec 覆盖 31 个工具实际用到的全部形态）
   const hostMod = toolDef.hostDefineTool ? await import('@deepseek-ai/dsh-tools') : null
   const repSpec = {
     mode: { type: 'string', description: '模式' },

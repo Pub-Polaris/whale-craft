@@ -66,9 +66,9 @@ export const DEFAULT_AGENTS_MD = `# Whale Craft 行事准则
 
 1. 用 \`mc_accounts {action:"list"}\` 拿账户列表。
 2. 用户指定了账户就用那个；没指定、而确实有多个可用账户时，先问用户用哪个。
-   - 选定：\`mc_accounts {action:"use", innerID:"..."}\`；或直接 \`mc_connect {account:"..."}\`。
+   - 选定方式就是连接时指名：\`mc_connect {address, account:"..."}\`。
 3. 需要时用 \`mc_accounts {action:"refresh"}\` 刷新登录状态（失败会明确告诉你"需要用户处理"）。
-4. \`mc_connect {host, subserver?, version?}\` 进服（\`version\` 不传 = 自动探测，推荐）。
+4. \`mc_connect {address}\` 进服（\`address\` 形如 \`example.com\` 或 \`example.com:25566\`；版本自动探测）。
 5. **刷新或登录失败时**：把原因告诉用户，并请他去「MC设置 → 账户」里**重新登录**那个账户，或点**刷新**。
 
 用户让你进入服务器，如果没有说明服务器地址，你应该先调用 \`mc_lan\` 工具扫描局域网服务器，并进入。但如果实在是找不到或无法进入，向用户询问要进入什么服务器。

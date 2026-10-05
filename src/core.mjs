@@ -19,7 +19,7 @@
 import mineflayer from 'mineflayer'
 import vec3pkg from 'vec3'
 import { offlineUuid, dashUuid } from './accounts.mjs'
-import { supportedRange } from './mcversion.mjs'
+import { supportedRange, isVersionSupported } from './mcversion.mjs'
 import { EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
 import { writeFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, appendFileSync } from 'node:fs'
@@ -593,15 +593,18 @@ export class McBot extends EventEmitter {
    *      · `{ mode:'yggdrasil', authUrl, authUser, authPass?, accessToken?, clientToken? }` —— 皮肤站
    *
    * @param {Object} opts
-   * @param {string} [opts.host] / [opts.port] / [opts.subserver]
-   * @param {string|false} [opts.version] - 协议版本（默认 false=自动探测）
+   * @param {string} [opts.host] / [opts.port] - 由工具层从单一 address 解析好再传进来
    * @param {Object} [opts.auth] - 上面的账户描述符（**唯一**的凭据入口）
+   *
+   * 🔴 2026-10-05（用户定）：不再有 `subserver` / `version` 参数 —— 用户只输入一个 address；
+   *    握手 serverHost 由 mineflayer 默认用 host（= 用户地址）发出，DNS + Velocity 自行路由。
+   *    版本**永远自动探测**；连上后发现版本不在支持范围内 → 断开并抛错。
    */
   async connect (opts = {}) {
     const host    = opts.host      || this.cfg.host      || DEFAULTS.host
     const port    = Number(opts.port ?? this.cfg.port ?? DEFAULTS.port)
-    const sub     = opts.subserver || this.cfg.subserver || DEFAULTS.subserver || ''
-    const version = opts.version   ?? false
+    const sub     = this.cfg.subserver || DEFAULTS.subserver || ''
+    const version = false                 // 永远自动探测（用户 2026-10-05：不再由调用方传）
     const auth    = opts.auth ?? null
 
     if (!host) {
@@ -614,7 +617,7 @@ export class McBot extends EventEmitter {
 
     // 记录当前生效的连接参数（给 mc_status 用，**不含任何凭据**）
     this._connectionProfile = {
-      host, port, subserver: sub, version,
+      host, port, version: null,          // 连接成功后回填**实际协商版本**
       authMode: auth.mode,
       account: auth.label ?? auth.name ?? null,
     }
@@ -703,9 +706,24 @@ export class McBot extends EventEmitter {
 
       try {
         await new Promise((resolve, reject) => {
-          const t = setTimeout(() => reject(new Error(`连接 ${sub} 超时`)), this.cfg.connectTimeoutMs)
-          b.once('spawn', () => { clearTimeout(t); resolve() })
-          b.once('kicked', (r) => { clearTimeout(t); reject(new Error(`被踢: ${String(r).slice(0, 200)}`)) })
+          // 🔴 版本不受支持时 mineflayer 在 spawn 前 async 报 "No data available for version X"——
+          //    **只对这种错误快速失败**（否则会干等 45s 超时，把"版本不适配"报成误导性的"连接超时"，
+          //    2026-10-05 真机：26.2 服务器）。其余错误/断开保持原有"等服务端/等超时"的行为——
+          //    否则会抢在 'end' 之前 reject，破坏"真断开 → 发 offline 事件"的时序。
+          const VERSION_RE = /No data available for version\s*([\w.\-]+)/i
+          let settled = false
+          const cleanup = () => { b.removeListener('error', onErr); b.removeListener('end', onEnd) }
+          const finish = (fn) => { if (settled) return; settled = true; clearTimeout(t); cleanup(); fn() }
+          const t = setTimeout(() => finish(() => reject(new Error(`连接 ${sub} 超时`))), this.cfg.connectTimeoutMs)
+          const onErr = (e) => { if (VERSION_RE.test(String(e?.message ?? ''))) finish(() => reject(e)) }
+          const onEnd = (r) => {
+            const msg = String(this.lastError ?? (typeof r === 'string' ? r : JSON.stringify(r ?? '')))
+            if (VERSION_RE.test(msg)) finish(() => reject(new Error(msg)))
+          }
+          b.once('spawn', () => finish(() => resolve()))
+          b.once('kicked', (r) => finish(() => reject(new Error(`被踢: ${String(r).slice(0, 200)}`))))
+          b.on('error', onErr)
+          b.on('end', onEnd)
         })
       } catch (e) {
         try { b.quit() } catch {}
@@ -715,15 +733,35 @@ export class McBot extends EventEmitter {
           return attemptOnce(attempt + 1)
         }
         if (previous?.entity) { this.bot = previous; this.log('新连接失败，保留原有连接') }
+        // 🔴 版本不受支持：mineflayer 缺该版本的协议数据 → 转成明确的版本错误（不是"连接超时"）
+        const noData = /No data available for version\s*([\w.\-]+)/i.exec(String(e?.message ?? ''))
+        if (noData) {
+          const err = new Error(`服务器版本 ${noData[1]} 不在插件支持范围内（底层 mineflayer 没有该版本的协议数据）`)
+          err.hint = `这台服务器是 ${noData[1]}，当前插件还不支持（可连的版本见 mc_capabilities）。`
+          this.lastError = err.message
+          throw err
+        }
         // 认证/入服失败（令牌失效等）：转成"需要用户处理"的明确错误；
         // 顺便把 yggdrasil 兼容层记下的那个 session-join 失败也捞出来当原因。
         const joinErr = takeAuthJoinError()
         throw friendlyAuthError(joinErr ?? e)
       }
 
+      // 🔴 版本不在支持范围内 → 强制失败（用户 2026-10-05 定）：断开刚建的连接，抛用户可读错误。
+      //    放在 spawn 成功之后、接管 this.bot 之前 —— 失败就保留原连接，别把好连接顶掉。
+      if (isVersionSupported(b.version) === false) {
+        try { b.quit() } catch {}
+        if (previous?.entity) { this.bot = previous; this.log('服务器版本不受支持，保留原有连接') }
+        const err = new Error(`服务器版本 ${b.version} 不在插件支持范围内`)
+        err.hint = `这台服务器是 ${b.version}，当前插件还不支持（可连的版本见 mc_capabilities）。`
+        this.lastError = err.message
+        throw err
+      }
+
       if (previous && previous !== b) { try { previous.quit() } catch {} }
       this.bot = b
       this.sub = sub
+      this._connectionProfile.version = b.version   // 实际协商版本（供 mc_status）
       this._lastHost = host          // ⚠️ 必须记：否则上面的"已连着就直接返回"永不生效，
                                      //    重复 mc_connect 会真去重连（先把自己踢下线再登回来）
       this.connectedAt = Date.now()
@@ -1143,7 +1181,7 @@ export class McBot extends EventEmitter {
   connectionView () {
     const p = this._connectionProfile
     if (!p) return null
-    return { host: p.host ?? null, port: p.port ?? null, subserver: p.subserver || null }
+    return { host: p.host ?? null, port: p.port ?? null, version: p.version ?? null }
   }
 
   status () {
@@ -1179,6 +1217,86 @@ export class McBot extends EventEmitter {
       held: b.heldItem ? `${b.heldItem.name}x${b.heldItem.count}` : null,
       uptimeSec: Math.round((Date.now() - this.connectedAt) / 1000),
       inWater: Boolean(b.entity.isInWater),
+    }
+  }
+
+  /**
+   * 游戏上下文（`mc_context`）。basic = 模式/维度/坐标/朝向；
+   * survival 段（血量/吸收/饱食/饱和/气泡/装备/经验 + buff + 坐骑/骑乘者）——生存/冒险模式默认给，
+   * `survival:true` 可强制给（用户 2026-10-05 定）。
+   */
+  context ({ survival = false } = {}) {
+    const b = this.bot
+    if (!b?.entity) return { online: false }
+    const p = b.entity.position
+    const gamemode = b.game?.gameMode ?? null
+    const out = {
+      online: true,
+      gamemode,
+      dimension: b.game?.dimension ?? null,
+      position: { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) },
+      yaw: b.entity.yaw ?? null,
+      pitch: b.entity.pitch ?? null,
+    }
+    if (survival !== true && gamemode !== 'survival' && gamemode !== 'adventure') return out
+    out.health = b.health ?? null
+    out.absorption = b.entity.absorption ?? null
+    out.food = b.food ?? null
+    out.saturation = b.foodSaturation ?? null
+    out.air = b.oxygenLevel ?? null
+    out.experience = { level: b.experience?.level ?? null, points: b.experience?.points ?? null }
+    out.equipment = this.equipmentView()
+    out.effects = this.effectsView()
+    const vehicle = b.vehicle?.entity ?? b.vehicle ?? null
+    out.vehicle = vehicle ? (vehicle.name ?? vehicle.username ?? null) : null
+    out.passengers = (b.entity.passengers ?? []).map((e) => e?.name ?? e?.username ?? null).filter(Boolean)
+    return out
+  }
+
+  /** 装备视图：手持 / 四件护甲 / 副手（无物品 → null） */
+  equipmentView () {
+    const b = this.bot
+    const slots = b?.inventory?.slots
+    if (!slots) return null
+    const fmt = (it) => (it ? `${it.name}x${it.count}` : null)
+    return {
+      held: fmt(b.heldItem),
+      armor: [slots[5], slots[6], slots[7], slots[8]].map(fmt),
+      offhand: fmt(slots[45]),
+    }
+  }
+
+  /** buff 列表：id + 名字（尽力经 minecraft-data 解析）+ 等级 + 剩余秒 */
+  effectsView () {
+    const b = this.bot
+    const effects = b?.entity?.effects ?? {}
+    const out = []
+    for (const id of Object.keys(effects)) {
+      const e = effects[id]
+      let name = null
+      try { name = requireFromMineflayer('minecraft-data')(b.version)?.effects?.[Number(id)]?.name ?? null } catch {}
+      out.push({
+        id: Number(id), name,
+        amplifier: e?.amplifier ?? null,
+        durationSec: e?.duration != null ? Math.round(e.duration / 1000) : null,
+      })
+    }
+    return out
+  }
+
+  /** 在线玩家（含自己）：tab 栏名 / 档案名 / uuid（`mc_players`）*/
+  players () {
+    const b = this.bot
+    if (!b?.players) return { online: false, players: [] }
+    const strip = (s) => String(s ?? '').replace(/§[0-9a-fk-or]/gi, '')
+    return {
+      online: true,
+      self: b.username ?? null,
+      players: Object.values(b.players).map((p) => ({
+        tabName: strip(p.displayName ?? p.username ?? '') || null,
+        username: p.username ?? null,
+        uuid: p.uuid ?? null,
+      })),
     }
   }
 

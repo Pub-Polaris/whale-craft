@@ -29,7 +29,7 @@ DSH host 进程
    ├─ McRegistry            agentId → McSession
    │   └─ McSession         McBot + events[]（≤200 条）+ Watchdog + selectedAccount
    │       └─ McBot         src/core.mjs：mineflayer 实例（一个游戏角色）
-   ├─ 工具注册（29 个）      mc_* 25 / mc_kit_* 3 / mc_admin_* 1，全部经 asTool()
+   ├─ 工具注册（31 个）      mc_* 25 / mc_kit_* 3 / mc_admin_* 1 / mc_debug_* 2，全部经 asTool()
    ├─ HTTP（webServer）
    │   ├─ /api/mc/*                     状态/停止/设置（账户/配置/提示词/分享/preset 名单）
    │   └─ /api/whale-craft/express/*    发布区文件（仅 online 模式注册）
@@ -68,7 +68,7 @@ DSH host 进程
 
 详见 [src-modules.md §1](src-modules.md)。要点：
 
-- `connect({host, port, subserver, version, auth, onAuth})`：`auth` 是唯一凭据入口（`{mode:'offline'|'yggdrasil',...}`，绝不出现在返回值）；版本默认自动探测；**顶号**（"already connected"且建连 <9s）最多重试 4 次；失败**保留原连接**。
+- `connect({host, port, auth, onAuth})`：`auth` 是唯一凭据入口（`{mode:'offline'|'yggdrasil',...}`，绝不出现在返回值）；**版本永远自动探测**，版本不受支持则**建连期间快速失败 + 明确错误**（`src/mcversion.mjs`；`error`/`end` 快速失败，不干等超时）；**顶号**（"already connected"且建连 <9s）最多重试 4 次；失败**保留原连接**。（2026-10-05：`subserver`/`version` 参数已删）
 - 自动重连：延迟 5s 起、失败翻倍上限 60s、成功复位；`offline` 事件在 `b.on('end')` 里 emit，payload `{sub, reason, willReconnect, at}`。
 - 事件：`spawn / offline / reconnect / death / damage / chat / system` + 观察器 `playerJoin / playerLeave / teleport / pushed / pickup`（后三类默认只留档，见看门狗矩阵）。`chat` 的识别覆盖 signed（`player_chat` 包）、unsigned、**以及被服务端塞进 system 位置的玩家聊天**（`#playerChatFrom` 兜底正则 `/^\s*<who>\s*text$/`）。
 - **按键上报层已移除（2026-10-02）**：原先为 26.2 加的 `player_input` 兼容层（含"先查后发"护栏）整体撤掉——上游还连不了 26.2（mineflayer 4.39.0 只到 26.1；minecraft-data 3.117.0 只有元数据、无数据目录）。将来重建的注意事项见 [history.md](history.md)（D1 / F10）。
@@ -124,8 +124,8 @@ kind 变化先 release 再套新）：
 
 | 档 | preset | 可见性（`applyMcModePolicy`） | guard（每次调用现场判，切模式自愈） |
 | --- | --- | --- | --- |
-| `mc` | minecraft | `restrict({allow})` 白名单：mc_*（按 `hideAdminTools` 去 / 留 `mc_admin_*`）+ mc_kit_* + 文件工具 + present + `mcMode.allowOtherTools` | ① admin 硬拒 ② 凭据/secrets 硬拒 ③ 受保护文件只读 ④ 文件 jailed `.whale-craft/`（空路径也算越界）⑤ present 限会话工作区 |
-| `mc-plus` | minecraft-plus | **不套 restrict**（组成=标准全表，mc/mckit 走全局注册直接可见；`mc_admin_*` 也可见） | 仅②凭据/secrets 硬拒（文件全工作区；受保护文件按宿主默认） |
+| `mc` | minecraft | `restrict({allow})` 白名单：mc_*（按 `hideAdminTools` 去 / 留 `mc_admin_*`）+ mc_kit_* + 文件工具 + present + `mcMode.allowOtherTools`；`mc_debug_*` 仅当 `exposeDebugTools` 开时才进 | ① admin 硬拒 ② `exposeDebugTools` 关时拒 `mc_debug_*` ③ 凭据/secrets 硬拒 ④ 受保护文件只读 ⑤ 文件 jailed `.whale-craft/`（空路径也算越界）⑥ present 限会话工作区 |
+| `mc-plus` | minecraft-plus | **不套白名单**（组成=标准全表，mc/mckit 走全局注册直接可见；`mc_admin_*` 也可见）；仅当 `exposeDebugTools` 关时 `restrict({deny})` 掉 `mc_debug_*` | 仅③凭据/secrets 硬拒（文件全工作区；受保护文件按宿主默认） |
 | `other` | 其余 | `restrict({deny})`：`mc_*`（mc_admin_* 除外）+ `mc_kit_*` 从可见面摘掉 | **拒调** mc_* / mc_kit_*（mc_admin_* 除外）—— "不再给其他模式暴露"的第二道锁 |
 
 - ⚠️ 白名单只能**收窄**：不能凭空添加 preset 没挂的工具（宿主报错里 `known global tools:` 可直接解析后过滤重试）；`restrict` 是**黏性**的，切换靠 disposer。
