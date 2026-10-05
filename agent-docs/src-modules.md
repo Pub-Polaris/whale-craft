@@ -177,6 +177,15 @@
 - **追加插槽 `CONNECT_PROMPT_APPENDERS`**：`(ctx)=>string` 的数组，非空即按序追加（"因属性追加提示词"的扩展点，默认空）。
 - 可读版本同步在 `dev-docs/prompt/connect_to_mc.md`（**改一处要改两处**）。
 
+## 13d. `src/mcversion.mjs` —— MC 版本「在不在支持范围内」判定（2026-10-05）
+
+- **口径**（用户 2026-10-05 拍板）：范围 = mineflayer `lib/version.js` 的 `testedVersions` **上下界**，中间版本按**数值**比；**快照一律不支持**；判不了返回 `null`（按支持处理）。不连服、无副作用。
+- `supportedRange()`：`{oldest, latest, tested[]}`（记忆化；读不到 mineflayer → null）。与 `core.mjs::libraryInfo` **同源**。
+- `isVersionSupported(version, range?)`：`true`/`false`/`null`。纯函数，`range` 可显式传（selfcheck 不依赖本机 mineflayer）。
+- `parseRelease`（`[maj,min,patch]`，缺段补 0）/`compareVersions`/`classifyVersion`（`release|snapshot|unknown`）/`isSnapshotVersion`。
+- **两套规则都认**：经典 `1.21.11` 与**新 26.x 规则** `26.1`（26>1，序关系天然成立）；快照含老式 `25w46a`、新式 `26.3-snapshot-10`/`26.3-pre-2`、旧式 `1.21.4-pre1`。
+- 调用点：`index.js::probeLan`（局域网行加 `supported` 给前端）、`core.mjs::libraryInfo`（复用区间）。
+
 ## 14. `src/wsconfig.mjs` —— 按工作区的配置
 
 > 用户 2026-10-03 定：按工作区独立的设置（提示词版本 + 「MC设置→提示词」三开关）统一存 `<记忆根>/config.json`（默认 `<工作区>/.whale-craft/config.json`），取代原来的 `.rules-version` 独立标记 + 全局三开关。

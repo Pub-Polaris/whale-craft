@@ -19,6 +19,7 @@
 import mineflayer from 'mineflayer'
 import vec3pkg from 'vec3'
 import { offlineUuid, dashUuid } from './accounts.mjs'
+import { supportedRange } from './mcversion.mjs'
 import { EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
 import { writeFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, appendFileSync } from 'node:fs'
@@ -1928,15 +1929,11 @@ export class McBot extends EventEmitter {
  */
 export function libraryInfo () {
   const out = { mineflayer: null, testedVersions: [], oldest: null, latest: null, dataVersions: null, error: null, yggdrasilCompat: yggCompat }
-  try {
-    const pkg = requireFromMineflayer('./package.json')
-    out.mineflayer = pkg?.version ?? null
-    const v = requireFromMineflayer('./lib/version.js')
-    const list = Array.isArray(v?.testedVersions) ? v.testedVersions : (Array.isArray(v?.default) ? v.default : [])
-    out.testedVersions = [...list]
-    out.oldest = v?.oldestSupportedVersion ?? list[0] ?? null
-    out.latest = v?.latestSupportedVersion ?? list[list.length - 1] ?? null
-  } catch (e) { out.error = String(e?.message ?? e) }
+  try { out.mineflayer = requireFromMineflayer('./package.json')?.version ?? null } catch (e) { out.error = String(e?.message ?? e) }
+  // 支持版本区间与 `mcversion.mjs` **同源**（testedVersions 的上下界）——别再各读一份。
+  const range = supportedRange()
+  if (range) { out.testedVersions = range.tested; out.oldest = range.oldest; out.latest = range.latest }
+  else if (!out.error) out.error = '读不到 mineflayer 的版本表（lib/version.js）'
   try {
     const mcd = requireFromMineflayer('minecraft-data')
     const pc = mcd?.versions?.pc ?? []

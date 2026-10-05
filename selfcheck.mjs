@@ -3630,6 +3630,27 @@ console.log('\n--- 单地址探测（mc_ping）---')
   console.log(`  ${pingOut?.ok === false && pingOut?.code === 'ECONNREFUSED' ? '✅' : '❌'} 工具路径也不抛异常、原样回 ok:false（${pingOut?.code}）`)
 }
 
+console.log('\n--- MC 版本范围判定（src/mcversion.mjs）---')
+{
+  const { isVersionSupported, parseRelease, classifyVersion, supportedRange } = await import('./src/mcversion.mjs')
+  // 显式区间：**不依赖本机 mineflayer**；覆盖经典 1.x、新 26.x 规则、快照三族、未知三态
+  const range = { oldest: '1.8.8', latest: '26.1' }
+  const cases = [
+    ['1.8.8', true], ['1.8.7', false], ['1.7.10', false],           // 下界
+    ['1.19', true], ['1.21.7', true], ['1.21.11', true],           // 区间内（含清单外的 1.21.7）
+    ['26.1', true], ['26.2', false], ['26.3', false],              // 新 26.x 规则 / 上界
+    ['25w46a', false], ['26.3-snapshot-10', false], ['26.3-pre-2', false],
+    ['1.21.4-pre1', false], ['1.21.2-rc1', false],                 // 快照/预发布一律不支持
+    ['', null], [null, null], ['weird-ver', null],                 // 未知 → null（按支持处理）
+  ]
+  const bad = cases.filter(([v, exp]) => isVersionSupported(v, range) !== exp)
+  console.log(`  ${bad.length === 0 ? '✅' : '❌'} isVersionSupported（新 26.x 规则 + 快照一律 false + 未知 null）：${bad.map(([v, e]) => `${JSON.stringify(v)}期望${e}实际${isVersionSupported(v, range)}`).join(', ') || `${cases.length} 例全过`}`)
+  const live = supportedRange()
+  console.log(`  ${live && live.oldest && live.latest && live.tested.length ? '✅' : '❌'} supportedRange() 读 mineflayer testedVersions 上下界：${live ? `${live.oldest} .. ${live.latest}（${live.tested.length} 项）` : 'null'}`)
+  console.log(`  ${classifyVersion('26.1') === 'release' && classifyVersion('25w46a') === 'snapshot' && classifyVersion('x') === 'unknown' ? '✅' : '❌'} classifyVersion 三态（release / snapshot / unknown）`)
+  console.log(`  ${JSON.stringify(parseRelease('1.19')) === '[1,19,0]' && JSON.stringify(parseRelease('26.1')) === '[26,1,0]' ? '✅' : '❌'} parseRelease 缺段补 0（1.19→1.19.0；26.1→26.1.0）`)
+}
+
 console.log('\n--- 客户端 bundle（client.js 静态检查）---')
 {
   const { readFileSync } = await import('node:fs')
@@ -3705,7 +3726,8 @@ console.log('\n--- 客户端 bundle（client.js 静态检查）---')
     ['按钮里的运行图标用**负外边距**收掉方框透明边（不然左边距看着很大）', /\[data-wc-btn\] \.wc-runicon\{margin-left:-4px/.test(code)],
     ['🔴 局域网卡片整体是按钮，运行图标**无缝嵌入**（不再是独立按钮）', /'data-wc-cn-lan': ''/.test(code) && /data-wc-cn-run/.test(code) && !/\['data-wc-cn-lan'\] \[data-wc-cn-actions\]/.test(code)],
     ['局域网行：**版本号在人数左边**，各自可标红（data-wc-cn-bad）', /data-wc-cn-ver/.test(code) && /data-wc-cn-count/.test(code) && /data-wc-cn-bad/.test(code)],
-    ['版本支持范围**预留**（MC_VERSION_IN_RANGE 未实现 → null，按在范围内处理）', /const MC_VERSION_IN_RANGE = \(\) => null/.test(code)],
+    ['版本支持由后端 `supported` 决定（占位 MC_VERSION_IN_RANGE 已删）', !/MC_VERSION_IN_RANGE/.test(code) && /lanVersionOk = \(s\) => s\?\.supported !== false/.test(code)],
+    ['probeLan 每行带 supported（isVersionSupported 算好给前端）', /supported: isVersionSupported\(ok \? ping\.version : null\)/.test(readFileSync(new URL('./index.js', import.meta.url), 'utf8'))],
     ['版本不符 / 人满 → 点它弹错误框且**不发起连接**', /const clickLan/.test(code) && /版本不匹配/.test(code) && /服务器已满/.test(code)],
     ['🔴 新对话页走**模拟玩家发言**（asUser + `[system] `）；对话中仍用插件提示行', /asUser: true/.test(code) && /asUser: false/.test(code) && /asUser: props\?\.asUser === true/.test(code)],
     ['输入框 box-sizing:border-box（否则比按钮高一点点）', /\[data-wc-cn-input\]\{box-sizing:border-box/.test(code)],

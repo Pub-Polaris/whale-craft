@@ -1135,13 +1135,6 @@ select[data-wc-in]{appearance:none;padding-right:22px;
      * 只是**提示**，不影响开关可用性（开关始终用于改配置）。
      */
     /**
-     * **预留**：判断一个 MC 版本号是否在本插件支持范围内。
-     * 目前**未实现** → 返回 `null`（未知），调用方按"在范围内"处理（版本号显示绿色）。
-     * 实现后应返回 `true` / `false`；`false` → 版本号标红，点它弹错误框。
-     */
-    const MC_VERSION_IN_RANGE = () => null
-
-    /**
      * 「运行」图标 = DSH 裸三角（`IconTriangleRightFillRegular` 的几何）**描边成空心**
      * （用户 2026-10-04：要**空心三角**，不要带外圈的 play）。靠 `className` 覆盖 path 的 fill。
      */
@@ -1871,8 +1864,10 @@ select[data-wc-in]{appearance:none;padding-right:22px;
         h('span', { 'data-wc-cn-src': '' }, `（${(ACCT_TYPE[a.type] ?? {}).label ?? a.type}）`))
       const current = accts.find((x) => x.innerID === accountId)
       // 局域网行：满了 / 版本不支持 → 标红；点它**直接连接**（不填输入框、不记历史）
+      // 版本支持与否由**后端**（probeLan → src/mcversion.mjs）算好，这里只读 `supported`：
+      //   true=支持（绿）／false=不支持（红，快照也走这条）／null=未知（按支持处理）。
       const lanFull = (s) => Boolean(s?.players && s.players.max != null && s.players.online != null && s.players.online >= s.players.max)
-      const lanVersionOk = (s) => MC_VERSION_IN_RANGE(s?.version) !== false
+      const lanVersionOk = (s) => s?.supported !== false
       const clickLan = (s) => {
         if (!lanVersionOk(s)) { setError(`版本不匹配：这台服务器是 ${s.version}，当前插件还不支持`); return }
         if (lanFull(s)) { setError(`服务器已满：${s.players.online}/${s.players.max}`); return }

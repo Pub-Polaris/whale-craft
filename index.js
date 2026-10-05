@@ -44,6 +44,7 @@ import { userMessage, messageFactoryKind, pluginLoadNote } from './src/user-mess
 import { ImageEngine, imageEngineAvailable, imageEngineError } from './src/image.mjs'
 import { listenLanBroadcast } from './src/lan.mjs'
 import { statusPing, parseAddress, formatAddress, flattenMotd } from './src/ping.mjs'
+import { isVersionSupported } from './src/mcversion.mjs'
 import { ServerHistory } from './src/serverhistory.mjs'
 import { buildConnectPrompt } from './src/connect-prompt.mjs'
 import { waitForEvents } from './src/wait.mjs'
@@ -949,6 +950,8 @@ export function apply(ctx, rawConfig) {
           // MOTD 一律**剥掉颜色码**（§x）、**换行符换成空格**再给前端（前端按"固定两行"折行显示）
           motd: flattenMotd(ok ? ping.motd : h?.motd).replace(/[\r\n]+/g, ' ').replace(/[ \t]{2,}/g, ' ').trim(),
           version: ok ? (ping.version ?? null) : null,
+          // 版本在不在支持范围（`src/mcversion.mjs`；快照一律 false）——前端据此把版本号标红 / 拦连接。
+          supported: isVersionSupported(ok ? ping.version : null),
           players: ok ? { online: ping.players?.online ?? null, max: ping.players?.max ?? null } : null,
         }
       }))

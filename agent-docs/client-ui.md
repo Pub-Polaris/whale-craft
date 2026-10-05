@@ -115,13 +115,14 @@ transform:scale(1.35)` **按图形自身**略微放大（**别放满**，放满�
    **方块一行、文案一行**（各占一行、水平居中），方块只动 opacity 的呼吸动画；出结果后**整张卡片就是
    一个按钮**（`<button data-wc-cn-lan>`），运行图标**无缝嵌在卡片里**（`data-wc-cn-run`，不是独立按钮）。
    行内容 =「局域网」chip + 地址 + **MOTD** + **版本号（人数左边）** + 在线人数 + ▶。
-   · 🔴 **预留待实现**：`MC_VERSION_IN_RANGE(version)`（client.js，`const MC_VERSION_IN_RANGE = () => null`）
-     ——**目前恒返回 `null`（未实现）**，即所有版本都按"在范围内"处理（**版本号显示绿色**）。
-     将来实现后：支持返回 `true`、不支持 `false`；`false` 时版本号标红、点它会弹错误框且不发起连接。
+   · 🔴 **版本支持判定由后端算**（2026-10-05 接线）：`probeLan` 每行带 `supported`
+     （`src/mcversion.mjs` 的 `isVersionSupported`）——前端只读 `s.supported`（client.js `lanVersionOk`）。
+     `true`=支持（绿）／`false`=不支持（红，**快照一律 false**）／`null`=未知（按支持处理）。
+     范围 = mineflayer `testedVersions` 的上下界，中间版本按数值比；认 `1.x` 与**新 26.x 规则**。
    · **MOTD**（`data-wc-cn-motd`）：地址**右边**、灰色、**固定两行**（`-webkit-line-clamp:2`）；
      后端已 `flattenMotd` 剥颜色码 **并把换行符换成空格**（`.replace(/[\r\n]+/g,' ')`），前端只按宽度折行。
-   · **版本号**：在插件支持范围内**绿**、超出**红**——判定用 `MC_VERSION_IN_RANGE`（**目前预留未实现**，
-     返回 `null` ⇒ 按"在范围内"处理）；· **人数**：未满**绿**、满/超**红**（`data-wc-cn-bad`）。
+   · **版本号**：在插件支持范围内**绿**、超出**红**（`data-wc-cn-bad`，读后端的 `supported`）；
+     · **人数**：未满**绿**、满/超**红**（`data-wc-cn-bad`）。
    · **版本不符或人满**：点它**弹错误框且不发起连接**。版本支持 = 不填输入框、不记历史。
 4. 分隔线 + 配置行：**账户下拉**（选项 `名字（来源）`——**「（来源）」是灰的**，`data-wc-cn-src`；
    默认选中默认账户；末尾灰色**「添加/管理」**）+ 预留的「选项」区（`data-wc-cn-extras`）。
