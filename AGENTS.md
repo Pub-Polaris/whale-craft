@@ -11,15 +11,18 @@ whale_craft 是 DSH（DeepSeek Harness）原生插件：把无头 Minecraft 机�
 | 想做的事 | 读 |
 | --- | --- |
 | 理解系统怎么转（数据流 / 注入 / 唤醒 / 隔离） | `agent-docs/architecture.md` |
-| 改 / 加工具 | `agent-docs/tool-catalog.md` |
+| 改 / 加工具 | `agent-docs/tool-catalog.md`（速览）· `dev-docs/tools/mc-tools.md`（工具参考） |
 | 改 `src/` 某个模块 | `agent-docs/src-modules.md` |
 | 改浏览器半端 / 加 UI 入口 | `agent-docs/client-ui.md` |
 | **动手前必读**：本机环境硬约束、隔离铁律、调试 | `agent-docs/dev-workflow.md` |
 | 发版 | `agent-docs/release.md` |
 | 想动"看起来奇怪"的代码前 | `agent-docs/history.md`（版本史 / P0 事故档案） |
 
-> 本目录（`agent-docs/`）是内部文档的唯一去处：写任何调研/机制/流程类文档都放这里，并更新其 `README.md` 索引；
-> 改动了结构性内容（模块、工具、机制）后同步相应篇目。
+> 内部文档分两处，别放混：
+> · `agent-docs/` —— **主要给 agent 看**（人类一般不看），完全由 agent 维护、与项目记忆对齐；写调研/机制/流程/代码地图
+>   类文档放这里，并更新其 `README.md` 索引。
+> · `dev-docs/` —— 与**底层设计**相关，**人类和 agent 共同维护**（如 `prompt/`、`ui/`、`tools/mc-tools.md` 工具详细参考）。
+> 改动了结构性内容（模块、工具、机制）后，**两处相应篇目都要同步**。
 
 ## 铁律速查（都是违反过、吃过亏的）
 

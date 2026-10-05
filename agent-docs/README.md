@@ -1,6 +1,6 @@
 # whale_craft 内部开发文档（agent-docs）
 
-> 面向接手本仓库的 AI agent 与开发者。**先读这一页**，再按需进入各专题。
+> 面向接手本仓库的 AI agent（**只给 agent 看、由 agent 维护**；需要人看的底层设计放 [`dev-docs/`](../dev-docs/)）。**先读这一页**，再按需进入各专题。
 > 仓库根有一份 [`AGENTS.md`](../AGENTS.md) 作为引导入口（DSH 宿主会把根 `AGENTS.md` 当工作区指令自动注入），
 > 它只放"先读这里 + 最硬的几条铁律 + 验证命令"，完整地图与铁律速查以本页为准。
 > 快照：whale_craft **0.2.0**（**开发中，未发布**；自 `v0.1.7` 起累计：issue #1 修复、`tools/dev.mjs`、26.2 兼容层移除、DSH 版本范围、插件页本地化、按工作区 config.json、**设置两态 + 插件页「设置」入口 + 「连接到MC」弹窗 + 文件分享改开关**），2026-10-04。
@@ -72,3 +72,6 @@ npm run check                 # = check-core + selfcheck
 ```
 
 > 改完结构性内容（模块、工具、机制）后，**请同步更新本目录**。
+> 本目录（`agent-docs/`）**只给 agent 看、完全由 agent 维护**；需要人看的**底层设计 / 接口参考**放
+> [`dev-docs/`](../dev-docs/)（人类和 agent 共维护，如 `prompt/`、`ui/`、`tools/mc-tools.md` 工具参考）。
+> 结构性改动两处都要同步（例如工具：本目录 `tool-catalog.md` 速览 + `dev-docs/tools/mc-tools.md` 工具参考）。
