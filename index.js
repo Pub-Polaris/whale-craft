@@ -2153,6 +2153,51 @@ export function apply(ctx, rawConfig) {
 
   /* ── 世界读取 ── */
 
+  /**
+   * 工具输出布局（`mc_map` / `mc_height`，2026-10-05 用户定，将推广到其他工具）：
+   *   · `reply`（默认 true）—— 结果**是否作为工具调用结果回复到上下文**；false 时只写文件、只回一行 stub。
+   *   · `dist`（路径，可空）—— 把结果**写到文件**；空 = 不写文件。两者互不影响。
+   * 路径规则：**绝对路径照用**；**相对路径以工作区根为基准**（不是 `.whale-craft/`——要与其他工具一致，
+   * 且 MC+ 模式允许访问外界）。不再有默认输出目录。
+   */
+  const outputPathFor = (raw, agent) => {
+    const p = String(raw ?? '').trim()
+    if (!p) return null
+    if (isAbsolute(p)) return resolve(p)
+    const root = workspaceRootFor(agent)
+    if (!root) throw new Error('这个会话没有工作区，无法解析相对输出路径——请给绝对路径。')
+    return resolve(root, p)
+  }
+  /** 按格式补扩展名（已有同扩展名则不重复） */
+  const withExt = (p, ext) => (p.toLowerCase().endsWith(ext) ? p : p + ext)
+  /**
+   * 当前模型是否接受图片输入（best-effort）：`ctx.llm.resolveModelInfo(provider, model).inputModalities`。
+   * 拿不到信息（服务缺失 / 未知模态）→ 按**支持**处理（与改版前一致）；明确不含 `image` → false。
+   */
+  const modelAcceptsVision = async (agent) => {
+    try {
+      const agentsSvc = ctx.get('agents'); const llm = ctx.get('llm')
+      if (!agentsSvc?.selectionFor || !llm?.resolveModelInfo) return true
+      const cur = agentsSvc.selectionFor(agent)?.current
+      if (!cur?.provider || !cur?.model) return true
+      const info = await llm.resolveModelInfo(cur.provider, cur.model)
+      return info?.inputModalities === undefined ? true : info.inputModalities.includes('image')
+    } catch { return true }
+  }
+  /** 落盘（自动建目录）→ 返回写出的字节数 */
+  const writeOutputFile = (abs, data) => {
+    mkdirSync(dirname(abs), { recursive: true })
+    writeFileSync(abs, data)
+    return Buffer.byteLength(data)
+  }
+  /** 把 PNG 交宿主做图片附件；拿不到服务/失败 → 返回 {attachmentError}（不抛，别打断循环） */
+  const attachImage = async (png, name) => {
+    const att = ctx.get('attachments')
+    if (!att || typeof att.saveImage !== 'function') return { attachmentError: '宿主没有 attachments 服务' }
+    try { return { attachment: await att.saveImage({ data: new Uint8Array(png), mediaType: 'image/png', name }) } }
+    catch (e) { return { attachmentError: e.message } }
+  }
+
   ctx.tools.register(asTool({
     name: 'mc_context',
     description: '获取游戏上下文：游戏模式、所在维度、坐标、朝向。'
@@ -2200,86 +2245,135 @@ export function apply(ctx, rawConfig) {
     },
   }))
 
+  /** `mc_map` / `mc_height` 共用的输出渲染：有 text 出 text，有 image.attachment 出图片块，都没有 → note。 */
+  const mapLikeOutput = {
+    schema: { type: 'object', properties: {}, additionalProperties: true },
+    render: (args, value) => {
+      const blocks = []
+      if (value?.text) blocks.push({ type: 'text', text: String(value.text) })
+      if (value?.image?.attachment) blocks.push({ type: 'image', attachment: value.image.attachment })
+      if (!blocks.length) blocks.push({ type: 'text', text: String(value?.note ?? '(no output)') })
+      return blocks
+    },
+  }
+
   ctx.tools.register(asTool({
     name: 'mc_map',
     description: '看周围地形。format="chars"（默认）返回**字符地形图**（无视觉也能读：'
       + '@ 是我 · ~ 水 · . 沙 · " 草木 · T 木构 · : 石/建筑 · _ 土/农田 · # 白 · ? 未加载）；'
-      + 'format="image" 额外生成**俯视图像**（模型有视觉时直接能看，并落盘到工作区）。'
-      + `🔴 要让 **Master** 看到图：给 \`out:"\\.whale-craft/${EXPRESS_DIR}/<子目录>/map.png"\` 写进发布区，`
-      + '再用 `mc_kit_express` 取那一行（按「文件分享」模式返回路径 / URL / 或一句提示），自己拼进回复。'
-      + 'format="both" 两者都给。字符图省 token 且坐标精确；形状/外观问题用图像。',
+      + 'format="image" 生成**真彩俯视图**（模型有视觉时直接能看）。'
+      + '`reply`（默认 true）= 结果是否回复到上下文；`dist` = 结果写到的文件路径（可空，写文件与 reply 互不影响）。'
+      + '路径：绝对照用，相对以**工作区根**为基准。字符图存 .txt、图像存 .png。'
+      + '网格方向**上北下南 · 左西右东**。'
+      + `要让 **Master** 看到图：先 dist 写到发布区（\`.whale-craft/${EXPRESS_DIR}/<子目录>/x.png\`），再用 \`mc_kit_express\` 取链接。`,
     parameters: {
       radius: { type: 'number', description: '半径（默认 32，上限 96）' },
       glyphStep: { type: 'number', description: '字符图抽稀步长（默认 2；1 最细）' },
       yTop: { type: 'number', description: '地表搜索起始高度偏移（默认 +10）' },
       yBottom: { type: 'number', description: '向下搜索深度（默认 -24）' },
-      format: { type: 'string', description: 'chars（默认）/ image / both' },
+      format: { type: 'string', description: 'chars（默认）/ image' },
       scale: { type: 'number', description: '图像每格放大倍数（默认 4，1–16）' },
-      out: { type: 'string', description: `落盘路径（工作区相对；默认 .whale-craft/${OUT_DIR}/mc-map-<时间>.png 不对外）。`
-        + `想让 Master 看到就写到 .whale-craft/${EXPRESS_DIR}/<子目录>/x.png（发布区），再用 mc_kit_express 取那一行` },
+      reply: { type: 'boolean', description: 'true（默认）= 结果回复到上下文；false = 只写文件、回一行 stub' },
+      dist: { type: 'string', description: '输出文件路径（可空）；绝对路径或相对工作区根。chars→.txt、image→.png' },
     },
-    output: {
-      schema: { type: 'object', properties: {}, additionalProperties: true },
-      render: (args, value) => {
-        const blocks = [{ type: 'text', text: String(value?.text ?? JSON.stringify(value, null, 2)) }]
-        // 图像以附件形式内联；纯文本模型由宿主自动降级成文本占位
-        if (value?.image?.attachment) blocks.push({ type: 'image', attachment: value.image.attachment })
-        return blocks
-      },
-    },
-    timeoutMs: 60_000,
+    output: mapLikeOutput,
     async execute(args, exec) {
       const sess = getSession(exec)
       await sess.bot.waitForChunks()
       const format = String(args.format ?? 'chars').toLowerCase()
+      const reply = args.reply !== false
       const step = Math.max(1, Number(args.glyphStep ?? 2))
       const hm = sess.bot.heightmap({ radius: args.radius, yTop: args.yTop, yBottom: args.yBottom })
+      const out = { center: hm.center, radius: hm.radius, unloadedTiles: hm.unloaded, legend: hm.legend.slice(0, 15), format }
 
-      const out = {
-        center: hm.center, radius: hm.radius, unloadedTiles: hm.unloaded,
-        legend: hm.legend.slice(0, 15),
-        format,
+      if (format === 'chars') {
+        const glyphMap = McBot.glyphMap(hm.names, step, { x: hm.radius, y: hm.radius })
+        if (reply) out.text = glyphMap
+        const dist = outputPathFor(args.dist, exec?.agent)
+        if (dist) { try { const file = withExt(dist, '.txt'); out.written = { file, bytes: writeOutputFile(file, Buffer.from(glyphMap, 'utf8')) } } catch (e) { out.writeError = e.message } }
+        if (!reply) out.note = out.written ? `已写入 ${out.written.file}（${out.written.bytes} 字节）` : '（reply=false 且未给 dist：无输出）'
+        return out
       }
-      if (format === 'chars' || format === 'both') {
-        out.glyphMap = McBot.glyphMap(hm.names, step, { x: hm.radius, y: hm.radius })
-      }
-      if (format === 'image' || format === 'both') {
-        const img = sess.bot.mapImage({
-          radius: args.radius, yTop: args.yTop, yBottom: args.yBottom, scale: args.scale,
-        })
+
+      if (format === 'image') {
+        const img = sess.bot.mapImage({ radius: args.radius, yTop: args.yTop, yBottom: args.yBottom, scale: args.scale })
         const png = encodePng(img.width, img.height, img.rgba)
         out.image = { width: img.width, height: img.height, bytes: png.length, scale: img.scale }
-
-        // ① 内联给模型/前端看
-        const att = ctx.get('attachments')
-        if (att && typeof att.saveImage === 'function') {
-          try {
-            out.image.attachment = await att.saveImage({
-              data: new Uint8Array(png), mediaType: 'image/png', name: 'mc-map.png',
-            })
-          } catch (e) { out.image.attachmentError = e.message }
-        } else {
-          out.image.attachmentError = '宿主没有 attachments 服务'
-        }
-        // ② 顺手落盘：默认 **`.whale-craft/.out/`**（不对外）。给了 `out`（例如
-        //    `.whale-craft/.express/world1/map.png`）就写那儿 —— 落在发布区时结果里会带上
-        //    现成的 `express.url` 与 `express.markdown`（`![](url)`），原样粘进回复 Master 就能看到。
-        try {
-          const { writeFileSync, mkdirSync } = await import('node:fs')
-          const wsRoot = workspaceRootFor(exec?.agent)
-          const rel = args.out
-            ? String(args.out)
-            : `.whale-craft/${OUT_DIR}/mc-map-${Date.now()}.png`
-          const file = resolve(wsRoot, rel)
-          mkdirSync(dirname(file), { recursive: true })
-          writeFileSync(file, png)
-          out.image.file = rel
-          out.image.hint = `要让用户看到这张图：把它写到发布区（out:".whale-craft/${EXPRESS_DIR}/<子目录>/x.png"），`
-            + '再用 mc_kit_express 取"给用户的那一行"（按「文件分享」模式返回路径/URL/或一句提示）。'
-            + '默认输出（.out/）不对外。'
-        } catch (e) { out.image.fileError = e.message }
+        const dist = outputPathFor(args.dist, exec?.agent)
+        if (dist) { try { const file = withExt(dist, '.png'); out.written = { file, bytes: writeOutputFile(file, png) } } catch (e) { out.writeError = e.message } }
+        const vision = await modelAcceptsVision(exec?.agent)
+        if (!vision) out.image.warning = '当前模型不接受图片输入——已跳过附图（要图片文件请给 dist 路径）。'
+        else if (reply) Object.assign(out.image, await attachImage(png, 'mc-map.png'))
+        if (!reply) out.note = out.written ? `已写入 ${out.written.file}` : '（reply=false 且未给 dist：无输出）'
+        else if (!vision) out.note = out.image.warning
+        return out
       }
-      return out
+
+      throw new Error(`未知 format："${format}"（可用 chars / image）`)
+    },
+  }))
+
+  ctx.tools.register(asTool({
+    name: 'mc_height',
+    description: '获取高度（地势）图：每列取一个"地表 Y"——`startY` 处无方块则向下找第一个方块取 Y，'
+      + '有方块则向上找第一个空格取 Y−1。`startY` 留空 = 当前所在 Y。按 `glyphStep` 抽样（省算力）；`ignoreLiquid:true` 把液体当空气。'
+      + 'format="chars"（默认）用字符模拟（低→高）；"image" 分层设色等高图；"full" **逐格填高度值的 CSV**（一格一个 Y，不是 x/y/z 坐标）。'
+      + '网格方向**上北下南 · 左西右东**（每行一串 Y，行=北→南，列=西→东）。'
+      + '`scale` 仅 image 有效；chars 存 .txt、full 存 .csv。`reply`/`dist` 语义同 `mc_map`。',
+    parameters: {
+      radius: { type: 'number', description: '半径（默认 32，上限 96）' },
+      glyphStep: { type: 'number', description: '抽样步长（默认 2）' },
+      startY: { type: 'number', description: '起始 Y（留空 = 当前所在 Y）' },
+      ignoreLiquid: { type: 'boolean', description: 'true = 把液体视为无方块（水面/岩浆下的地面才算地表）' },
+      format: { type: 'string', description: 'chars（默认）/ image / full' },
+      scale: { type: 'number', description: '图像放大倍数（默认 4，1–16，仅 image）' },
+      reply: { type: 'boolean', description: 'true（默认）= 结果回复到上下文；false = 只写文件、回一行 stub' },
+      dist: { type: 'string', description: '输出文件路径（可空）；绝对路径或相对工作区根。chars→.txt、image→.png、full→.csv' },
+    },
+    output: mapLikeOutput,
+    async execute(args, exec) {
+      const sess = getSession(exec)
+      await sess.bot.waitForChunks()
+      const format = String(args.format ?? 'chars').toLowerCase()
+      const reply = args.reply !== false
+      const step = Math.max(1, Number(args.glyphStep ?? 2))
+      const ignoreLiquid = args.ignoreLiquid === true
+      const g = sess.bot.heightGrid({ radius: args.radius, step, startY: args.startY, ignoreLiquid })
+      const out = { center: g.center, startY: g.startY, step: g.step, ignoreLiquid, min: g.min, max: g.max, grid: `${g.gridWidth}x${g.gridHeight}`, format }
+
+      if (format === 'full') {
+        const csv = g.heights.map((row) => row.map((h) => (h === null ? '' : String(h))).join(',')).join('\n')
+        if (reply) out.csv = csv
+        const dist = outputPathFor(args.dist, exec?.agent)
+        if (dist) { try { const file = withExt(dist, '.csv'); out.written = { file, bytes: writeOutputFile(file, Buffer.from(csv, 'utf8')) } } catch (e) { out.writeError = e.message } }
+        if (!reply) out.note = out.written ? `已写入 ${out.written.file}` : '（reply=false 且未给 dist：无输出）'
+        return out
+      }
+
+      if (format === 'chars') {
+        const glyphs = McBot.heightGlyphs(g.heights, g.min, g.max)
+        if (reply) out.text = glyphs
+        const dist = outputPathFor(args.dist, exec?.agent)
+        if (dist) { try { const file = withExt(dist, '.txt'); out.written = { file, bytes: writeOutputFile(file, Buffer.from(glyphs, 'utf8')) } } catch (e) { out.writeError = e.message } }
+        if (!reply) out.note = out.written ? `已写入 ${out.written.file}` : '（reply=false 且未给 dist：无输出）'
+        return out
+      }
+
+      if (format === 'image') {
+        const img = sess.bot.heightImage({ radius: args.radius, step, startY: args.startY, scale: args.scale, ignoreLiquid })
+        const png = encodePng(img.width, img.height, img.rgba)
+        out.image = { width: img.width, height: img.height, bytes: png.length, scale: img.scale }
+        const dist = outputPathFor(args.dist, exec?.agent)
+        if (dist) { try { const file = withExt(dist, '.png'); out.written = { file, bytes: writeOutputFile(file, png) } } catch (e) { out.writeError = e.message } }
+        const vision = await modelAcceptsVision(exec?.agent)
+        if (!vision) out.image.warning = '当前模型不接受图片输入——已跳过附图（要图片文件请给 dist 路径）。'
+        else if (reply) Object.assign(out.image, await attachImage(png, 'mc-height.png'))
+        if (!reply) out.note = out.written ? `已写入 ${out.written.file}` : '（reply=false 且未给 dist：无输出）'
+        else if (!vision) out.note = out.image.warning
+        return out
+      }
+
+      throw new Error(`未知 format："${format}"（可用 chars / image / full）`)
     },
   }))
 

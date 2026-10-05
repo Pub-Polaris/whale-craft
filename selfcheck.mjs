@@ -268,7 +268,7 @@ console.log('\n--- 工具面（share 移除 / present 接入）---')
   const { readFileSync } = await import('node:fs')
   const idx = readFileSync(new URL('./index.js', import.meta.url), 'utf8')
   console.log(`  ${!tools.has('mc_kit_share') ? '✅' : '❌'} 🔴 mc_kit_share 已移除（它只是在调宿主**另装**的 dsh-file-host，插件本身没有文件服务器）`)
-  console.log(`  ${tools.size === 31 ? '✅' : '❌'} 工具数 31（实际 ${tools.size}）：mc_* 25 + mc_kit_* 3 + mc_admin_* 1 + mc_debug_* 2`)
+  console.log(`  ${tools.size === 32 ? '✅' : '❌'} 工具数 32（实际 ${tools.size}）：mc_* 26 + mc_kit_* 3 + mc_admin_* 1 + mc_debug_* 2`)
   // 只看**代码**，不看注释：注释里留着"为什么删"的说明（那是要留的）
   const codeOnly = idx.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
   console.log(`  ${!/uploadToFileHost|dsh-file-host|\/serve\/file-host|mc_kit_share/.test(codeOnly) ? '✅' : '❌'} 源码里没有上传/文件服务器残留（注释里保留"为什么删"的说明）`)
@@ -289,7 +289,8 @@ console.log('\n--- 工具面（share 移除 / present 接入）---')
   console.log(`  ${/探"本部署有哪些 preset 工具包"失败/.test(idx) && /一个随附 preset 的组成都没扫到/.test(idx) ? '✅' : '❌'} 探针失败 / 一个 preset 都没扫到时**记一行日志**（判据失效不许伪装成"确实没有"）`)
   // 发布区（用户 2026-09-17 定稿：`/api/whale-craft/express/<工作区 uuid>/…`，自己一条前缀路由）
   console.log(`  ${/const outDir = outRootOf\(memoryRootFor/.test(idx) ? '✅' : '❌'} mc_kit_image 默认输出 .whale-craft/.out/（**不对外**）`)
-  console.log(`  ${/\.whale-craft\/\$\{OUT_DIR\}\/mc-map-/.test(idx) ? '✅' : '❌'} mc_map 默认也落 .out/，并支持 out: 写进发布区`)
+  // 2026-10-05：mc_map/mc_height 改用 reply/dist（不再默认落 .out/；相对路径以工作区根为基准）
+  console.log(`  ${/const outputPathFor = \(raw, agent\)/.test(idx) && /const modelAcceptsVision = async/.test(idx) ? '✅' : '❌'} mc_map/mc_height 输出布局（dist/reply + 视觉检查）就位`)
   console.log(`  ${/const serveSharedFile = \(req, res, hit\)/.test(idx) && /path: '\/api\/whale-craft'/.test(idx) && /isTrustedRequest\(req\.headers/.test(idx) ? '✅' : '❌'} 🔴 发布区有自己的前缀路由 /api/whale-craft（自己过信任栅栏）`)
   console.log(`  ${/const workspaceIdOfCwd = \(cwd\)/.test(idx) && /workspaceCwdById/.test(idx) ? '✅' : '❌'} 🔴 地址用**工作区 uuid**（查宿主 workspaceRegistry，不再用目录名）`)
   console.log(`  ${!/serveExpressFile/.test(idx) && !/knownWorkspaces/.test(idx) ? '✅' : '❌'} 🔴 旧的"目录名 + 进程内见过的工作区集合"那套已删干净`)
@@ -1340,12 +1341,16 @@ console.log('\n--- 图像地图 ---')
   try { encodePng(0, 5, new Uint8Array(0)); console.log('  ❌ 非法尺寸竟然通过') }
   catch { console.log('  ✅ 非法尺寸被拒') }
 
-  // mc_map 参数面
+  // mc_map 参数面（2026-10-05 改版：+reply/dist，-out/both）
   const mp = Object.keys(tools.get('mc_map').parameters?.properties ?? {})
-  console.log(`  ${mp.includes('format') && mp.includes('scale') ? '✅' : '❌'} mc_map 支持 format/scale：${mp.join(', ')}`)
+  console.log(`  ${['format', 'scale', 'reply', 'dist'].every((k) => mp.includes(k)) && !mp.includes('out') ? '✅' : '❌'} mc_map 支持 format/scale/reply/dist（无 out）：${mp.join(', ')}`)
   // output.render 必须能产出 image 块
   const blocks = tools.get('mc_map').output.render({}, { text: 'x', image: { attachment: { attachmentId: 'a' } } })
   console.log(`  ${Array.isArray(blocks) && blocks.some((b) => b.type === 'image') ? '✅' : '❌'} mc_map 能返回 image 内容块（宿主对纯文本模型会自动降级）`)
+
+  // mc_height：新工具（高度/地势图）
+  const hp = Object.keys(tools.get('mc_height').parameters?.properties ?? {})
+  console.log(`  ${tools.has('mc_height') && ['radius', 'glyphStep', 'startY', 'ignoreLiquid', 'format', 'scale', 'reply', 'dist'].every((k) => hp.includes(k)) ? '✅' : '❌'} mc_height 就位（${hp.join(', ')}）`)
 }
 
 // ── 扩展点（需求 6 的另一半）──

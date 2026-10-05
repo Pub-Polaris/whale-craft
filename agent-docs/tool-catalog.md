@@ -1,7 +1,7 @@
-# 工具目录（31 个）
+# 工具目录（32 个）
 
 > 快照：**0.2.0**（开发中，未发布）。注册全部在 `index.js` 的 `apply()` 内（`ctx.tools.register(asTool({...}))`），
-> 分四段：`mc_*`（游戏内，25）/ `mc_kit_*`（游戏外辅助，3）/ `mc_admin_*`（管理，1）/ `mc_debug_*`（调试，2）。
+> 分四段：`mc_*`（游戏内，26）/ `mc_kit_*`（游戏外辅助，3）/ `mc_admin_*`（管理，1）/ `mc_debug_*`（调试，2）。
 > 可见性按模式分档（2026-10-04）：**MC模式** 只见 mc/mckit + 文件工具；**MC+模式** 全量可见（含 admin）；
 > **其他模式** 隐藏 mc_* / mc_kit_*（仅保留 `mc_admin_*`），另有 guard 硬拒兜底。
 > 🔴 **调试工具（`mc_debug_*`）另受「MC设置 → 调试」的 `exposeDebugTools` 开关门控**（2026-10-05）：关时在 MC/MC+ 也不暴露（白名单 / MC+ deny / guard 三处）。
@@ -30,13 +30,14 @@
 
 > `mc_sessions` / `mc_diag` 已改名并移入「调试」（见 §七）。
 
-## 二、观察（7）
+## 二、观察（8）
 
 | 工具 | 职责 | 关键点 |
 | --- | --- | --- |
 | `mc_context` | 游戏上下文 | basic = 模式/维度/坐标/朝向；survival 段（血量/吸收/饱食/饱和/气泡/装备/经验 + buff + 坐骑/骑乘者）——生存/冒险默认给，`survival:true` 强制给。底层 `core.context()` |
 | `mc_players` | 在线玩家 | tab 栏名 / 档案名 / uuid（含自己）。底层 `core.players()` |
-| `mc_map` | 地形图 | `format: chars / image / both`；`image` 渲染真地形图 → 手工 PNG（`encodePng`）→ **图片附件**回给模型；同时落盘 `.whale-craft/.out/`（给 `out` 参数则写发布区） |
+| `mc_map` | 地表方块图 | `format: chars / image`（**`both` 已删**）；`image` 渲染真彩俯视图 → 手工 PNG（`encodePng`）；🔴 **2026-10-05 改版**：`out` → **`dist`**（结果文件路径；空=不写文件）+ **`reply`**（默认 true=结果回复到上下文；false=只写文件/stub）；无默认输出目录；相对路径以**工作区根**为基准；chars 存 `.txt`；附图前先查模型是否接受视觉（`ctx.llm.resolveModelInfo`），不接受则跳过附图并给警告 |
+| `mc_height` | 高度（地势）图 | 每列一个地表 Y（startY 处无方块→向下找第一个方块；有方块→向上找第一个空格取 Y−1；startY 空=当前 Y）；按 `glyphStep` 抽样省算力；`ignoreLiquid:true` 把液体当空气（水面/岩浆下的地面才算地表）。`format: chars / image / full`（分层设色等高图 / 字符模拟 / **逐格高度值 CSV**——一格一个 Y、非 x/y/z 坐标）；`scale` 仅 image；chars→.txt、full→.csv；`reply`/`dist` 同 `mc_map`。**网格上北下南·左西右东**。底层 `core.heightGrid/heightImage/heightGlyphs` |
 | `mc_scan` | 范围扫描 | 半径 ≤24、高 ≤16；25 类方块计数或按名搜索 |
 | `mc_entities` | 附近实体 | 半径默认 24，返回前 40 |
 | `mc_inventory` | 背包 | — |
@@ -103,4 +104,4 @@
 
 - **`mc_kit_share`（及 `mc_map` 的 `share` 参数）已删除**（2026-09-16）：它只是在调宿主**另装**的 `dsh-file-host`，插件本身没有文件服务器。"让用户看到文件"改走：宿主 `present`（显式文件交付）+ 本插件的 `mc_kit_express`。自检里有"mc_kit_share 已移除 / 源码无文件服务器残留"的断言——老名字不要再出现。
 - 文件分享 2026-10-04 起是**开关**（`expressEnabled`），不再有"模式"；老配置里的 `expressMode`（含 `local`）由 `PluginConfig.migrate` 搬成布尔（`online`→`true`，其余→`false`）。
-- **2026-10-05 工具面改动**：① `mc_connect`/`mc_ping` 收成单一 `address`（删 `host/port/subserver/version`；版本永远自动探测，连上后版本不支持则强制断开）② `mc_accounts` 删 `use` ③ `mc_lan` 删 `mode` ④ 新增 `mc_context`/`mc_players` ⑤ `mc_sessions`/`mc_diag` → `mc_debug_sessions`/`mc_debug_diag`（受 `exposeDebugTools` 门控）⑥ `mc_status` 改为"连接态 + 在线内联 context"。工具总数 29 → **31**。
+- **2026-10-05 工具面改动**：① `mc_connect`/`mc_ping` 收成单一 `address`（删 `host/port/subserver/version`；版本永远自动探测，连上后版本不支持则强制断开）② `mc_accounts` 删 `use` ③ `mc_lan` 删 `mode` ④ 新增 `mc_context`/`mc_players` ⑤ `mc_sessions`/`mc_diag` → `mc_debug_sessions`/`mc_debug_diag`（受 `exposeDebugTools` 门控）⑥ `mc_status` 改为"连接态 + 在线内联 context" ⑦ `mc_map` 改版：`out`→`dist` + `reply`、去 `both`、无默认输出目录、相对路径以工作区根为基准、chars 存 .txt、附图前查视觉；新增 **`mc_height`**（高度/地势图，chars/image/full）。工具总数 29 → **32**。

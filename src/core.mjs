@@ -375,6 +375,23 @@ function colorOf (name) {
   return [150, 150, 150]
 }
 
+/** 分层设色（等高图）：t∈[0,1] 低→高 → RGB（蓝→青绿→黄→橙→白） */
+function heightColorOf (t) {
+  const stops = [
+    [0.00, [40, 80, 160]], [0.20, [70, 150, 90]], [0.45, [150, 195, 85]],
+    [0.65, [215, 205, 90]], [0.80, [200, 140, 70]], [0.92, [170, 110, 90]], [1.00, [245, 245, 245]],
+  ]
+  const x = Math.min(1, Math.max(0, t))
+  for (let i = 1; i < stops.length; i++) {
+    if (x <= stops[i][0]) {
+      const [t0, c0] = stops[i - 1]; const [t1, c1] = stops[i]
+      const k = (x - t0) / Math.max(1e-6, t1 - t0)
+      return [0, 1, 2].map((j) => Math.round(c0[j] + (c1[j] - c0[j]) * k))
+    }
+  }
+  return stops[stops.length - 1][1]
+}
+
 /**
  * 一个 Minecraft 机器人（保活、事件、世界操作）。
  * 事件（EventEmitter）：'chat'(玩家聊天) 'system'(系统消息) 'spawn' 'end' 'kicked' 'error' 'damage' 'log'
@@ -1426,6 +1443,109 @@ export class McBot extends EventEmitter {
       center: hm.center, radius: hm.radius, unloaded: hm.unloaded,
       legend: hm.legend.slice(0, 15),
       scale: s,
+    }
+  }
+
+  /* ───────────── 高度（地势）图（`mc_height`）───────────── */
+
+  /**
+   * 单列"地表 Y"：startY 处**没有方块** → 向下找第一个有方块的位置，取其 Y；
+   * startY 处**有方块** → 向上找第一个没有方块的位置，取其 **Y − 1**。
+   * 未加载（blockAt 为 null）或到界都没有 → null。
+   */
+  surfaceY (x, y0, z, bottom, top, ignoreLiquid = false) {
+    const b = this.bot
+    const at = (y) => b.blockAt(new Vec3(x, y, z))
+    const solid = (blk) => blk && !isAir(blk.name) && !(ignoreLiquid && isLiquid(blk.name))
+    const blk0 = at(y0)
+    if (blk0 === null) return null
+    if (!solid(blk0)) {
+      for (let y = y0 - 1; y >= bottom; y--) {
+        const blk = at(y)
+        if (blk === null) return null
+        if (solid(blk)) return y
+      }
+      return null
+    }
+    for (let y = y0 + 1; y <= top; y++) {
+      const blk = at(y)
+      if (blk === null || !solid(blk)) return y - 1
+    }
+    return top
+  }
+
+  /**
+   * 高度网格：按 `step` 抽样（每 step 格取一列，省算力），每列一个地表 Y。
+   * @returns {{center, startY, step, bottom, top, min, max, gridWidth, gridHeight, heights:(number|null)[][]}}
+   */
+  heightGrid ({ radius = 32, step = 2, startY = null, ignoreLiquid = false } = {}) {
+    const b = this.requireBot()
+    const R = Math.min(Math.max(Math.floor(radius), 4), 96)
+    const s = Math.max(1, Math.floor(Number(step) || 1))
+    const cx = Math.floor(b.entity.position.x)
+    const cz = Math.floor(b.entity.position.z)
+    const cy = Math.floor(b.entity.position.y)
+    const y0 = (startY === null || startY === undefined || Number.isNaN(Number(startY))) ? cy : Math.floor(Number(startY))
+    const minY = Number.isFinite(b.game?.minY) ? b.game.minY : -64
+    const height = Number.isFinite(b.game?.height) ? b.game.height : 384
+    const bottom = minY
+    const top = minY + height - 1
+    const cols = Math.ceil((2 * R) / s)
+    const heights = []
+    let min = Infinity; let max = -Infinity
+    for (let gi = 0; gi < cols; gi++) {
+      const dz = -R + gi * s
+      const row = []
+      for (let gj = 0; gj < cols; gj++) {
+        const h = this.surfaceY(cx + (-R + gj * s), y0, cz + dz, bottom, top, ignoreLiquid)
+        if (h !== null) { if (h < min) min = h; if (h > max) max = h }
+        row.push(h)
+      }
+      heights.push(row)
+    }
+    if (min === Infinity) { min = y0; max = y0 }
+    return { center: { x: cx, y: cy, z: cz }, startY: y0, step: s, ignoreLiquid, bottom, top, min, max, gridWidth: cols, gridHeight: cols, heights }
+  }
+
+  /** 高度网格 → 字符（模拟图片，" " 最低、'@' 最高；null = '?'） */
+  static heightGlyphs (heights, min, max) {
+    const RAMP = ' .:-=+*#%@'
+    const span = Math.max(1, max - min)
+    return heights.map((row) => row.map((h) => {
+      if (h === null) return '?'
+      const t = Math.min(1, Math.max(0, (h - min) / span))
+      return RAMP[Math.min(RAMP.length - 1, Math.round(t * (RAMP.length - 1)))]
+    }).join('')).join('\n')
+  }
+
+  /** 高度网格 → 分层设色 RGBA 图（每格最近邻放大 scale 倍；null 画成深灰） */
+  heightImage ({ radius = 32, step = 2, startY = null, scale = 4, ignoreLiquid = false } = {}) {
+    const g = this.heightGrid({ radius, step, startY, ignoreLiquid })
+    const grid = g.heights
+    const h = grid.length
+    const w = h > 0 ? grid[0].length : 0
+    if (!w || !h) throw new Error('高度数据为空（区块可能还没加载）')
+    const s = Math.min(Math.max(Number(scale) || 4, 1), 16)
+    const W = w * s; const H = h * s
+    const rgba = new Uint8Array(W * H * 4)
+    const span = Math.max(1, g.max - g.min)
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const v = grid[y][x]
+        const [r, gg, bb] = v === null ? [70, 70, 70] : heightColorOf((v - g.min) / span)
+        for (let dy = 0; dy < s; dy++) {
+          const rowBase = (y * s + dy) * W
+          for (let dx = 0; dx < s; dx++) {
+            const o = (rowBase + x * s + dx) * 4
+            rgba[o] = r; rgba[o + 1] = gg; rgba[o + 2] = bb; rgba[o + 3] = 255
+          }
+        }
+      }
+    }
+    return {
+      width: W, height: H, rgba,
+      center: g.center, startY: g.startY, step: g.step, min: g.min, max: g.max,
+      gridWidth: w, gridHeight: h, scale: s,
     }
   }
 

@@ -93,9 +93,23 @@
 
 ### `mc_map`
 
-- **描述**：看周围地形：chars 字符图 / image 俯视图 / both
-- **参数**：`radius:number=32`（≤96）、`glyphStep:number=2`、`yTop:number=10`、`yBottom:number=-24`、`format:string=chars`、`scale:number=4`、`out:string`
-- **超时**：60s
+- **描述**：看周围地形：chars 字符图 / image 俯视图
+- **参数**：`radius:number=32`（≤96）、`glyphStep:number=2`、`yTop:number=10`、`yBottom:number=-24`、`format:string=chars`、`scale:number=4`、`reply:bool=true`、`dist:string`
+- **超时**：默认
+
+
+    reply默认为true，表示结果是否作为工具调用结果回复到上下文中。dsit为路径，表示将结果输出到文件，留空则不输出到文件。二者互不影响。这种布局还会使用在其他工具中。值得注意的是，如果工具调用结果中欲插入图片，则需先检查当前模型是否接受视觉。如果不接受，应该不返回图片，以警告消息代之，不要因报错打断循环。
+    
+    逐渐取缔.dist目录作为默认输出目录的存在。以后相关路径必须指定绝对路径。绝对路径允许，相对路径起始于工作区根目录。注意不是.whale-craft目录，因为要和其他工具保持一致，且我们有MC+模式存在允许访问外界。如果其他工具还用了相对路径且起始位置与这里有歧义，则也要逐渐取代。
+    
+    char形式的map保存的格式为.txt。
+
+### `mc_height`
+
+- **描述**：获取高度（地势）图
+- **参数**：`radius:number=32`（≤96）、`glyphStep:number=2`、`startY:number`、`ignoreLiquid:bool=false`（true时将液体视为无方块）、`format:string=chars`、`scale:number=4`、`reply:bool=true`、`dist:string`
+- **超时**：默认
+- **详细**：半径与前文map一致。startY留空则为目前角色所在Y。扫描方式为，startY处如果没有方块，则向下找到第一个有方块的位置的Y坐标，直到世界底部；startY处如果有方块，则向上找到第一个没有方块的位置，取其Y坐标-1，直到世界顶部。按graphStep取样每个坐标Y值填入结果网格。输出方式有chars、image、full。image为分层设色等高图，chars为用字符模拟的image，full为完整绝对Y坐标的csv。scale只对image有效。chars导出扩展名为.txt，full为.csv。
 
 ### `mc_scan`
 

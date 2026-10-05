@@ -143,11 +143,11 @@ dsh plugin --profile web add link:/path/to/whale-craft
 
 ---
 
-## 工具（31 个，四层命名空间）
+## 工具（32 个，四层命名空间）
 
 | 层 | 数量 | 工具 |
 | --- | --- | --- |
-| **游戏内** `mc_*` | 25 | `mc_status` `mc_ping` `mc_connect` `mc_lan` `mc_accounts` `mc_capabilities` `mc_disconnect` `mc_stop` `mc_config` `mc_context` `mc_players` `mc_say` `mc_events` `mc_watch` `mc_map` `mc_scan` `mc_entities` `mc_inventory` `mc_move` `mc_act` `mc_dig` `mc_build` `mc_give` `mc_sequence` `mc_command` |
+| **游戏内** `mc_*` | 26 | `mc_status` `mc_ping` `mc_connect` `mc_lan` `mc_accounts` `mc_capabilities` `mc_disconnect` `mc_stop` `mc_config` `mc_context` `mc_players` `mc_say` `mc_events` `mc_watch` `mc_map` `mc_height` `mc_scan` `mc_entities` `mc_inventory` `mc_move` `mc_act` `mc_dig` `mc_build` `mc_give` `mc_sequence` `mc_command` |
 | **游戏外辅助** `mc_kit_*` | 3 | `mc_kit_memory`（记忆树：按服/主题定位、`key` 覆盖、搜索、删除、把文件与图片**存进记忆**）· `mc_kit_image`（SVG→PNG / 引图 / 拼网格）· `mc_kit_express`（把发布区里的文件按「文件分享」模式换成路径 / URL / 一句提示） |
 | **管理** `mc_admin_*` | 1 | `mc_admin_config`（读写全局配置；**MC 模式看不见、也调不动**；普通模式与 **MC+模式** 可见可用） |
 | **调试** `mc_debug_*` | 2 | `mc_debug_sessions`（列活跃会话实例）· `mc_debug_diag`（诊断快照 + 提示词注入状态）。**需在「MC设置 → 调试」开启「开放助手调试工具」后**，才在 MC/MC+ 模式暴露 |
