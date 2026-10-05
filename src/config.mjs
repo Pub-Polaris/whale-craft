@@ -131,6 +131,11 @@ export const DEFAULT_CONFIG = {
   expressEnabled: false,
   /** 文件分享的 base（如 `https://dsh.example.com`，可带路径前缀）；空 = 还没配 */
   expressBase: '',
+  /**
+   * 「MC设置 → 调试」页的「开放助手调试工具」开关（默认关）：是否向助手暴露**调试用途的工具**供其调用。
+   * **工作区无关**（全局 config.json）。
+   */
+  exposeDebugTools: false,
 
 }
 
@@ -577,6 +582,11 @@ export class PluginConfig {
     return normalizeExpressBase(this.get('expressBase')) ?? ''
   }
 
+  /** 「开放助手调试工具」开关（默认关）——是否向助手暴露调试用途的工具 */
+  get exposeDebugTools () {
+    return this.get('exposeDebugTools') === true
+  }
+
   /** 这个 preset id 算不算 MC 模式 */
   isMcModePreset (presetId) {
     if (!presetId) return false
@@ -639,7 +649,7 @@ function validate (top, rest, value) {
     if (value !== null && typeof value !== 'string') throw new Error('memoryDir 必须是字符串（绝对路径）或 null')
     return
   }
-  if (top === 'allowAllCommands' || top === 'ensureMcPreset' || top === 'expressEnabled') {
+  if (top === 'allowAllCommands' || top === 'ensureMcPreset' || top === 'expressEnabled' || top === 'exposeDebugTools') {
     if (typeof value !== 'boolean') throw new Error(`${top} 必须是 true/false`)
     return
   }

@@ -118,6 +118,7 @@
 | `ensureMcPreset` | `true` | 旧宿主遗留：目录式自举「MC模式」（0.2.0-rc.2+ 由 `presets/*.patch.yml` 声明提供，此键 no-op） |
 | `expressEnabled` | `false` | 文件分享开关（2026-10-04 起是布尔；老 `expressMode` 由 `migrate` 搬） |
 | `expressBase` | `''` | 文件分享的访问 base |
+| `exposeDebugTools` | `false` | 「MC设置 → 调试」页的「开放助手调试工具」开关（工作区无关）：是否向助手暴露调试用途的工具 |
 
 - `PluginConfig`：`load`（坏配置不崩、记 `lastError` 按默认跑；**顺带跑 `migrate()`**）、`set` 只认 `TOP_KEYS`（= DEFAULT_CONFIG 键）且过 `validate`、`values()` 深合并（数组整体覆盖）；语义 getter（`mcModePresets/mcPlusPresets/memoryDir/expressEnabled/expressBase/commandAllowed/isMcModePreset/isMcPlusPreset`…）每次现读 ⇒ **改完热生效**。
 - `migrate()`：目前一档 —— 老 `expressMode: 'off'|'online'`（曾含 `'local'`）→ `expressEnabled`（`online`→`true`，其余→`false`），**删旧键**、只在真改动时落盘。

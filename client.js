@@ -1769,11 +1769,37 @@ select[data-wc-in]{appearance:none;padding-right:22px;
       return `${(v / 1024 / 1024).toFixed(1)} MB`
     }
 
+    /* ------------------------------------------------------------ 页 5：调试 */
+
+    /**
+     * 「调试」页：目前只有一个「开放助手调试工具」开关（工作区无关、落全局 config.json）——
+     * 是否向助手暴露**调试用途的工具**供其调用。
+     * 「一拨就存」：同「允许所有指令」那个开关（乐观更新，失败回滚）。
+     */
+    function DebugPane(props) {
+      const { exposeDebugTools, busyKey, onToggle } = props
+      const toggleBusy = busyKey === 'cfg:debug'
+      return React.createElement(
+        'div',
+        { 'data-wc-pane-page': 'debug' },
+        React.createElement('div', { 'data-wc-sec': '' },
+          React.createElement(Switch, {
+            label: '开放助手调试工具',
+            desc: '允许助手调用调试用途的工具',
+            disabled: toggleBusy,
+            on: exposeDebugTools === true,
+            onToggle: (next) => onToggle(next),
+          }),
+        ),
+      )
+    }
+
     const TABS = [
       { id: 'accounts', label: '账户' },
       { id: 'whitelist', label: '指令白名单' },
       { id: 'prompt', label: '提示词' },
       { id: 'share', label: '文件分享' },
+      { id: 'debug', label: '调试' },
     ]
 
     /* ==================================================================
@@ -2039,6 +2065,7 @@ select[data-wc-in]{appearance:none;padding-right:22px;
       // 「文件分享」：模式（off 关闭 / online 在线）+ base + 发布区现状
       const [shareOn, setShareOn] = React.useState(false)
       const [shareBase, setShareBase] = React.useState('')
+      const [exposeDebugTools, setExposeDebugTools] = React.useState(false)
       const [shareInfo, setShareInfo] = React.useState(null)
       const [wsPath, setWsPath] = React.useState('')
       const [wsExists, setWsExists] = React.useState(false)
@@ -2094,6 +2121,7 @@ select[data-wc-in]{appearance:none;padding-right:22px;
             setInjectWs(c.injectWorkspaceAgentsMd === true)
             setShareOn(c.expressEnabled === true)
             setShareBase(String(c.expressBase ?? ''))
+            setExposeDebugTools(c.exposeDebugTools === true)
             // 发布区是**按工作区**的：没有工作区时那个接口直接 400，别去碰它。
             if (!hasWs) { setShareInfo(null); return null }
             return apiGet(withSid('/api/mc/express')).then((s) => {
@@ -2283,6 +2311,17 @@ select[data-wc-in]{appearance:none;padding-right:22px;
       const clearShare = React.useCallback(() =>
         run('share:clear', () => apiDelete(withSid('/api/mc/express')), '分享数据已清除'), [run])
 
+      /* ── 页 5：调试 ──「开放助手调试工具」开关**一拨就存**（同"允许所有指令"：失败回滚）。 */
+      const toggleExposeDebugTools = React.useCallback((next) => {
+        const prev = exposeDebugTools === true
+        const want = next === true
+        if (want === prev) return Promise.resolve(true)
+        setExposeDebugTools(want)                            // 乐观更新
+        return run('cfg:debug', () => apiPatch(withSid('/api/mc/config'), { exposeDebugTools: want }),
+          want ? '已开放助手调试工具' : '已关闭调试工具')
+          .then((ok) => { if (!ok) setExposeDebugTools(prev); return ok })   // 失败回滚
+      }, [run, exposeDebugTools])
+
       if (!open) return null
 
       const busy = busyKey !== null
@@ -2307,12 +2346,16 @@ select[data-wc-in]{appearance:none;padding-right:22px;
               on: shareOn, base: shareBase, share: shareInfo, busyKey, hasWorkspace,
               onToggle: toggleShare, onSaveBase: saveShareBase, onUseCurrent: useCurrentBase, onClear: clearShare,
             })
-            : React.createElement(AccountsPane, {
+            : (tab === 'debug'
+              ? React.createElement(DebugPane, {
+                exposeDebugTools, busyKey, onToggle: toggleExposeDebugTools,
+              })
+              : React.createElement(AccountsPane, {
             accounts, servers, defaultAccount, busyKey,
             onPatch: patchAccount, onRefresh: refreshAccount, onDelete: deleteAccount,
             onCreate: createAccount, onAddServer: addServer, onAddCard: addServerCard,
             onRemoveServer: removeServer,
-          })))
+              }))))
 
       // 头部显示的工作区名（仅"有工作区"时显示）：注册表 title → 回退路径尾段；default-workspace 给中文名
       const wsDisplayName = hasWorkspace

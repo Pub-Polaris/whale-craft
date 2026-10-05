@@ -912,6 +912,8 @@ export function apply(ctx, rawConfig) {
       // 「MC设置 → 文件分享」：开关 + base（只有"在线"这一种方式，见 config.mjs `expressEnabled`）
       expressEnabled: pluginConfig.expressEnabled,
       expressBase: pluginConfig.expressBase,
+      // 「MC设置 → 调试」页的「开放助手调试工具」开关（工作区无关）
+      exposeDebugTools: pluginConfig.exposeDebugTools,
       // 「MC设置」入口的模式门控：前端拿这份名单 + 会话记录的 preset 就能**本地**判定
       // （不必为按钮问一次服务端；2026-09-16 事故：一次性请求失败后按钮永久消失）
       mcModePresets: pluginConfig.mcModePresets,
@@ -1121,7 +1123,7 @@ export function apply(ctx, rawConfig) {
       const cwd = await cwdOf(body)
       if (cwd) ensureMemoryRootForCwd(cwd)
       // 全局键 → PluginConfig（**无条件**）；三个提示词开关 → **本工作区**的 config.json（有工作区才写）
-      for (const k of ['commandWhitelist', 'allowAllCommands', 'expressEnabled', 'expressBase']) {
+      for (const k of ['commandWhitelist', 'allowAllCommands', 'expressEnabled', 'expressBase', 'exposeDebugTools']) {
         if (body[k] !== undefined) pluginConfig.set(k, body[k])
       }
       const wsPatch = {}
@@ -4163,7 +4165,7 @@ export function apply(ctx, rawConfig) {
       + '`mcModePresets`（哪些 preset 算 MC 模式——应含 MC+ 的 id）· `mcPlusPresets`（哪些算 MC+ 变体：'
       + '开放标准模式全部工具）· `mcMode.allowOtherTools`（MC 模式白名单里**额外**放行的工具）· '
       + '`mcMode.hideAdminTools`（默认 true）· `expressEnabled`（文件分享开关：true 开 / false 关）· '
-      + '`expressBase`（文件分享的 base，如 https://example.com）· `memoryDir`。\n'
+      + '`expressBase`（文件分享的 base，如 https://example.com）· `exposeDebugTools`（是否向助手暴露调试用途的工具，默认 false）· `memoryDir`。\n'
       + '改完**立即生效**，落在 `$DSH_HOME/whale_craft/config.json`。（白名单只能"收窄"，不能凭空添加 preset 没挂的工具。）',
     parameters: {
       action: { type: 'string', description: 'get（默认）/ set / unset / reset / list' },

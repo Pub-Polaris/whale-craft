@@ -109,6 +109,7 @@ dsh plugin --profile web add link:/path/to/whale-craft
 | `mcMode.hideAdminTools` | 是否把 `mc_admin_*` 也放进 MC 模式的白名单（默认隐藏，另有 guard 硬拒；MC+ 可见） | `true` |
 | `expressEnabled` | 文件分享开关（「文件分享」页那个开关）：`true` 开 / `false` 关。老配置的 `expressMode` 会自动搬过来 | `false` |
 | `expressBase` | 文件分享的 base（你访问这台 DSH 的地址，可带路径前缀） | `""` |
+| `exposeDebugTools` | 「调试」页的「开放助手调试工具」开关（工作区无关）：是否向助手暴露调试用途的工具 | `false` |
 | `memoryDir` | 记忆根目录（`null` = 用会话工作区的 `.whale-craft/`） | `null` |
 | `ensureMcPreset` | **旧宿主遗留**：0.2.0-rc.2+ 的 preset 由包内 `presets/*.patch.yml` 声明提供，这个自动创建开关在新宿主上是 no-op | `true` |
 

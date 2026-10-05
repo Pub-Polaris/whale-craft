@@ -2796,6 +2796,16 @@ console.log('\n--- 行事准则 RULES.md / 新开关 / 边界信息 ---')
   const shareReset = await tools.get('mc_admin_config').execute({ action: 'get', path: 'expressEnabled' }, A)
   console.log(`  ${shareReset.value === false ? '✅' : '❌'} reset 后文件分享回到默认**关**（${shareReset.value}）`)
 
+  /* 「开放助手调试工具」开关（2026-10-05）：全局配置键、默认关、有类型校验 */
+  const debugDefault = await tools.get('mc_admin_config').execute({ action: 'get', path: 'exposeDebugTools' }, A)
+  console.log(`  ${debugDefault.value === false ? '✅' : '❌'} exposeDebugTools 默认关（${debugDefault.value}）`)
+  await tools.get('mc_admin_config').execute({ action: 'set', path: 'exposeDebugTools', value: true }, A)
+  const debugOn = await tools.get('mc_admin_config').execute({ action: 'get', path: 'exposeDebugTools' }, A)
+  console.log(`  ${debugOn.value === true ? '✅' : '❌'} 管理员工具能设 exposeDebugTools（当前 ${debugOn.value}）`)
+  const debugBad = await tools.get('mc_admin_config').execute({ action: 'set', path: 'exposeDebugTools', value: 'yes' }, A).catch((e) => e.message)
+  console.log(`  ${/exposeDebugTools 必须是/.test(String(debugBad)) ? '✅' : '❌'} 非布尔被拒：${String(debugBad).slice(0, 40)}…`)
+  await tools.get('mc_admin_config').execute({ action: 'reset' }, A)
+
   /* 🔴 老配置迁移：`expressMode: 'online'|'off'|'local'|乱写` → `expressEnabled` 布尔，并**删掉旧键**、落盘 */
   {
     const { mkdtempSync, writeFileSync, readFileSync } = await import('node:fs')
@@ -3829,6 +3839,10 @@ console.log('\n--- 客户端 bundle（client.js 静态检查）---')
     ['不可撤销那句用 <strong>（HTML 不认 markdown 的 **）', /React\.createElement\('strong', \{\}, '全部删掉'\)/.test(code)],
     ['UI 里没有 markdown 式 `**`（渲染出来是字面星号）', !/'[^'\n]*\*\*[^'\n]*'/.test(code)],
     ['清除走 DELETE /api/mc/express', /apiDelete\(withSid\('\/api\/mc\/express'\)\)/.test(code)],
+    // ── 「调试」页（2026-10-05）：工作区无关的「开放助手调试工具」开关 ──
+    ['「调试」页存在（DebugPane + data-wc-pane-page:debug）', /function DebugPane/.test(code) && /'data-wc-pane-page': 'debug'/.test(code)],
+    ['标签页叫「调试」，开关叫「开放助手调试工具」', /label: '调试'/.test(code) && /label: '开放助手调试工具'/.test(code)],
+    ['「开放助手调试工具」开关一拨就存（乐观更新 + 失败回滚）', /setExposeDebugTools\(want\)/.test(code) && /exposeDebugTools: want/.test(code) && /if \(!ok\) setExposeDebugTools\(prev\)/.test(code)],
     // 「随版本更新」（提示词页）：开关 + 版本提示行 + 一拨就存 + 失败回滚
     ['「提示词」页有「随版本更新」开关', /label: '随版本更新'/.test(code) && /onToggle: \(next\) => onFollowVersion\(next\)/.test(code)],
     ['开关说明写清"会覆盖你的修改"', /用新版本的默认提示词替换当前内容（会覆盖你的修改）/.test(code)],
