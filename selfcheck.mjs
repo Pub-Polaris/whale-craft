@@ -663,6 +663,74 @@ console.log('\n--- 强制停止：UI 路径的真实顺序（停LLM → 退游�
   //    都按 `job.owner.id === caller` 比对；传 agent 对象 ⇒ "自己的 job 一个都列不出来、也杀不掉"。
   console.log(`  ${jobsCallers.length === 3 && jobsCallers.every((c) => c === 'sess-STOP') ? '✅' : '❌'} 🔴 list/kill 的 caller 都是**会话 id 字符串**（收到：${JSON.stringify(jobsCallers)}）`)
 
+  // ── 「创建MC+分支」（2026-10-05）：fork 源会话 + 把**新会话**改成 minecraft-plus ──
+  // 🔴 改模式必须绕开 `agentPresets.select` 的"已开聊就锁"（分支带继承历史必中锁）——
+  //    走 select 内部同样的两步：recompose（重绑）+ 追加 agent-preset/selected 事件。
+  // 🔴 改完要**复验**（composedPreset 必须真是 MC+）；不成则**回撤归档**刚建的分支 + ok:false。
+  {
+    const forkCalls = []
+    const recomposeCalls = []
+    const appendCalls = []
+    const renameCalls = []
+    const archived = []
+    const dispose = []   // observeSession 是**可释放资源**，读到的要 dispose（验一句句柄不漏）
+    let forkChildId = 'sess-CHILD1'
+    let presetsMode = 'ok'
+    sc2.fork = (req) => { forkCalls.push(req); return Promise.resolve({ sessionId: forkChildId }) }
+    sc2.rename = (req) => { renameCalls.push(req); return Promise.resolve({ title: req.title, seq: 0 }) }
+    const fakePresets = {
+      recompose: (c, id) => {
+        recomposeCalls.push([c, id])
+        if (presetsMode === 'throw') return Promise.reject(new Error('agent-preset/not-found: Unknown agent preset: minecraft-plus'))
+        return Promise.resolve({ id })
+      },
+      composedPreset: () => (presetsMode === 'wrong' ? 'standard' : 'minecraft-plus'),
+    }
+    const makeChild = (id) => ({
+      id,
+      session: { append: (type, data) => appendCalls.push([type, data]) },
+      ctx: { get: (k) => (k === 'agentPresets' ? fakePresets : undefined) },
+    })
+    const fakeSessionQuery = { observeSession: () => Promise.resolve({ events: [{ seq: 5, type: 'assistant/message', data: { message: { id: 'msg-1' } } }], header: { title: '测试会话' }, [Symbol.dispose]() { dispose.push(true) } }) }
+    const fakeWsReg = { archiveSession: (id) => { archived.push(String(id)); return Promise.resolve({ archivedSessionIds: [String(id)] }) } }
+    const origGet = ctx2.get
+    ctx2.get = (k) => (k === 'sessionQuery' ? fakeSessionQuery : k === 'workspaceRegistry' ? fakeWsReg : origGet(k))
+    const post = async (body) => {
+      const rq = new EventEmitter()
+      rq.method = 'POST'; rq.url = '/api/mc/branch-plus'; rq.headers = { host: '127.0.0.1:39999' }
+      const rs = { writeHead: () => {}, end: (b) => { rs.body = String(b ?? '') } }
+      const p = route2.handler(rq, rs)
+      rq.emit('data', JSON.stringify(body))
+      rq.emit('end')
+      await p
+      try { return JSON.parse(rs.body || '{}') } catch { return {} }
+    }
+    try {
+      // ① 成功路径
+      agents2 = { get: (id) => (id === 'sess-CHILD1' ? makeChild(id) : undefined) }
+      const okOut = await post({ sessionId: 'sess-API', messageId: 'msg-1' })
+      console.log(`  ${okOut.ok === true && okOut.sessionId === 'sess-CHILD1' && okOut.presetApplied === true ? '✅' : '❌'} 「创建MC+分支」成功返回新会话且模式已改（${JSON.stringify(okOut).slice(0, 110)}）`)
+      console.log(`  ${forkCalls.length === 1 && forkCalls[0].sessionId === 'sess-API' && forkCalls[0].atSeq === 5 ? '✅' : '❌'} 真的 fork 了源会话，且 atSeq 由 messageId 反查（${JSON.stringify(forkCalls)}）`)
+      console.log(`  ${recomposeCalls.length === 1 && recomposeCalls[0][1] === 'minecraft-plus' ? '✅' : '❌'} 🔴 新会话 preset 被**重绑**为 minecraft-plus（recompose，绕过 select 的锁）`)
+      console.log(`  ${appendCalls.length === 1 && appendCalls[0][0] === 'agent-preset/selected' && appendCalls[0][1]?.agentPreset === 'minecraft-plus' ? '✅' : '❌'} 🔴 追加 agent-preset/selected 事件（让投影/UI 看到 MC+）`)
+      console.log(`  ${renameCalls.length === 1 && renameCalls[0].sessionId === 'sess-CHILD1' && renameCalls[0].title === '测试会话 (1)' ? '✅' : '❌'} 标题 +1（对齐原生分支）：${JSON.stringify(renameCalls[0]?.title)}`)
+      console.log(`  ${dispose.length === 2 ? '✅' : '❌'} observeSession 的句柄读了就 dispose（2 次：解析 atSeq + 取标题，不漏）：${dispose.length}`)
+
+      // ② 失败路径：preset 不存在（throw）或**复验不符**（wrong）→ 回撤归档 + ok:false，绝不给"假 MC+ 分支"
+      for (const mode of ['throw', 'wrong']) {
+        forkCalls.length = 0; recomposeCalls.length = 0; appendCalls.length = 0; archived.length = 0
+        presetsMode = mode
+        forkChildId = `sess-BAD-${mode}`
+        agents2 = { get: (id) => (id === forkChildId ? makeChild(id) : undefined) }
+        const bad = await post({ sessionId: 'sess-API', messageId: 'msg-1' })
+        const good = bad.ok === false && typeof bad.error === 'string' && bad.error.length > 0 &&
+          bad.rolledBack === true && bad.sessionId === undefined && archived.length === 1 && archived[0] === forkChildId
+        console.log(`  ${good ? '✅' : '❌'} 🔴 改模式失败（${mode}）→ **回撤归档刚建的分支** + ok:false（不给"假 MC+ 分支"）：${JSON.stringify(bad).slice(0, 140)}`)
+      }
+      presetsMode = 'ok'
+    } finally { ctx2.get = origGet }
+  }
+
   // ── 「MC设置」HTTP 接口（锁住 E2E 抓到的真 bug：**DELETE 也带 body，必须读**）──
   // 🔴 2026-09-16：这组接口现在**必须有带工作区的 sessionId**（用户："没有选中工作区就拒绝设置"）。
   //    造一个带工作区的会话，下面所有设置调用都自动带上它。
@@ -3748,6 +3816,25 @@ console.log('\n--- 客户端 bundle（client.js 静态检查）---')
     // 地址只能走 connectionView()（host/port/subserver）；`_connectionProfile` 还带账号名，别发到浏览器
     ['后端只把 connectionView() 发给前端（不发含账号的 _connectionProfile）', !/connection: (sess|this)\.bot\._connectionProfile/.test(readFileSync(new URL('./index.js', import.meta.url), 'utf8'))],
   ]
+  // ── 「创建MC+分支」（2026-10-05）：消息操作行加一个立方体按钮 → fork + 把新会话改成 MC+ ──
+  {
+    const stripComments = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+    const idx = stripComments(readFileSync(new URL('./index.js', import.meta.url), 'utf8'))
+    const notices = readFileSync(new URL('./THIRD_PARTY_NOTICES.md', import.meta.url), 'utf8')
+    checks.push(
+      ['「创建MC+分支」挂到原生消息操作槽 conversation.chat.assistant-actions', /conversation\.chat\.assistant-actions/.test(code) && /whale_craft-plus-branch/.test(code)],
+      ['门控 = 本地 preset ∈ {standard, minecraft}（useSessions，不等网络）', /PLUS_BRANCH_FROM = \['standard', 'minecraft'\]/.test(code) && /usePlusBranchGate/.test(code) && /projectionValues\?\.agentPreset/.test(code)],
+      ['图标是**内联的 Lucide box（立方体）**，3 条 path（官方图标集没有立方体）', /function CubeIcon/.test(code) && /M21 8a2 2 0 0 0-1-1\.73l-7-4/.test(code) && /'m3\.3 7 8\.7 5 8\.7-5'/.test(code) && /'M12 22V12'/.test(code)],
+      ['按钮点击 POST /api/mc/branch-plus，成功后用 uiWorkspace.openSession 打开新会话', /'\/api\/mc\/branch-plus'/.test(code) && /uiWorkspace\.openSession\(j\.sessionId\)/.test(code)],
+      ['后端有 /api/mc/branch-plus 路由（POST）', /path === '\/api\/mc\/branch-plus'/.test(idx)],
+      ['🔴 改模式走 recompose + 追加 agent-preset/selected（绕开 select 的"已开聊"锁）', /presets\.recompose\(child\.ctx, target\)/.test(idx) && /append\('agent-preset\/selected'/.test(idx)],
+      ['atSeq 由 messageId 反查（对齐原生分支的落点）', /data\?\.message\?\.id === messageId/.test(idx)],
+      ['🔴 改模式后**复验**（composedPreset 必须真是 MC+，只 catch 不够）', /presets\.composedPreset\(child\.ctx\)/.test(idx) && /presetApplied = got === resolved/.test(idx)],
+      ['🔴 失败**自动回撤**（archiveSession 收走刚建的分支，不留"假 MC+ 分支"）', /wsReg\.archiveSession\(childId\)/.test(idx) && /rolledBack/.test(idx)],
+      ['前端失败弹错（error + hint，不静默）', /window\.alert\(msg\)/.test(code) && /filter\(Boolean\)\.join\('\\n\\n'\)/.test(code)],
+      ['第三方声明写了 Lucide（ISC 全文）', /Lucide/.test(notices) && /ISC License/.test(notices) && /box\.svg/.test(notices)],
+    )
+  }
   for (const [label, passed] of checks) console.log(`  ${passed ? '✅' : '❌'} ${label}`)
 }
 

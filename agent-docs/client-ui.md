@@ -16,6 +16,7 @@
 | --- | --- | --- | --- | --- |
 | `conversation.session.header.actions` | list | **session** | 状态条 / 强制停止（order 50）、「设置」（order 45）、**「连接到MC」（order 40，在设置左边）** | 进了游戏的会话 |
 | `conversation.input.right` | list | **session** | 新会话页 hero 的 **「连接到MC」+「设置」**（**驱动器**，本身 return null，按钮靠 DOM 按 order 插到模式芯片右边） | 新会话页 + MC 模式 |
+| `conversation.chat.assistant-actions` | list | **session** | **「创建MC+分支」**（order 10；立方体图标，见下） | 助手轮末消息 + 会话 preset ∈ `{standard, minecraft}` |
 | `plugins.detail.actions` | list | **root** | 插件页 → **whale_craft 详情页**头部的「设置」按钮（order 20） | 打开 whale_craft 的 bundle 详情页时 |
 
 - **会话插槽**（前两个）由宿主注入 `sessionId` / `useSessions` / 会话 cwd，能做"按会话/工作区"的判定与请求。
@@ -45,6 +46,29 @@
   我们的「设置」按钮就用 `IconSettingsOutlineRegular`（size 13）与之对齐。
 - 图标集是 DSH **自家设计**（16px 网格、1px 描边），**不是**某个开源图标库 ⇒ "官方同款"只能靠
   这个平台模块；若以后需要它没有的图形，才考虑引第三方开源图标库，并在 `THIRD_PARTY_NOTICES.md` 记一笔。
+- **🔴 迄今唯一一处例外**：「创建MC+分支」的**立方体**图标（见下）——官方图标集里没有立方体，
+  经用户 2026-10-05 拍板引了开源库 **Lucide** 的 `box`。本 bundle 无构建步骤、不引运行时依赖，
+  所以只把该图标的 **path 数据原样内联**（`client.js` 的 `CUBE_PATHS`），**不改路径**；ISC 许可全文记在
+  `THIRD_PARTY_NOTICES.md`。除此之外**仍一律用官方图标**。
+
+## 「创建MC+分支」（2026-10-05）
+
+助手轮末的消息操作行（原生「复制」「在新对话中分支」那一排）里，原生分支图标的旁边，多一个
+**立方体图标**按钮：只在会话 preset ∈ `{standard, minecraft}`（标准模式 / MC模式）时出现
+（判据是**本地** preset，走 `props.useSessions` 快照的 `projectionValues.agentPreset`，与官方模式标签同源）。
+点击 = **fork 一条分支 + 把新会话的模式改成 MC+**，然后打开新会话。
+
+- **挂载**：`conversation.chat.assistant-actions` 插槽（list/session，order 10）——它会渲染进原生
+  `MessageIconActions` 的 `extraActions` 位（**在原生分支图标左边**）；这是 DSH 提供**唯一**的消息操作扩展点
+  （当年想放"分支右边"只能 DOM 注入，用户选了官方插槽、接受位置在左）。
+- **后端**：`POST /api/mc/branch-plus {sessionId, messageId}`（见 architecture.md §9）。
+- 🔴 **失败自动回撤 + 弹错**：后端改模式后会**复验**（`composedPreset` 必须真是 MC+），不成就把刚建的分支
+  **归档收走**并回 `{ok:false, error, hint}`；前端弹 `window.alert(error + hint)`、**不打开**该会话。
+  所以用户要么拿到一个真的 MC+ 分支，要么什么也不多出来（源会话不受影响）。
+- 🔴 **为什么不能在客户端改模式**：DSH 的分支**继承父 preset**（宿主 fork 内
+  `composeAgent(presetForObservation(source))`），而 `agentPresets.select` 一开会话就跑过 turn 就锁
+  （`agent-preset/locked`）；分支子会话带着继承历史，正好命中锁。所以改模式只能在**宿主侧**绕过那道锁
+  （`recompose` + 追加 `agent-preset/selected`）——细节见 architecture.md §9 与 index.js 的 `forkMcPlusBranch`。
 
 ## 设置的两态：「有工作区 / 无工作区」（2026-10-04）
 

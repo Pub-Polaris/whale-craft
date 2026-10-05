@@ -59,10 +59,13 @@ window.__ModuleLoader__.load({
     let IconCloseOutlineRegular = null
     let IconRunRegular = null
     let IconChevronDownOutlineRegular = null
+    let TooltipPrimitive = null
     let createRoot = null
     try {
       const primitives = require('@deepseek-ai/dsh-client-ui-primitives')
       IconSettingsOutlineRegular = primitives.IconSettingsOutlineRegular
+      // 「创建MC+分支」按钮的 tooltip，与原生消息操作按钮同款。
+      TooltipPrimitive = primitives.Tooltip
       // 工作区标记：native `WorkspaceChip` 同款文件夹图标（有 label 时就用它、size 16）。
       IconFolderOpenRegular = primitives.IconFolderOpenRegular
       // 弹窗右上角关闭按钮的叉图标（与 DSH 原生弹窗同款）。
@@ -74,6 +77,9 @@ window.__ModuleLoader__.load({
       // 借 react-dom 的一个小根把图标渲染进按钮，图标仍出自同一套官方图标集（不另画、不搬路径）。
       createRoot = require('react-dom/client').createRoot
     } catch (e) { /* 见上：只用图标，拿不到就退回文字，别让按钮变空白 */ }
+
+    // apply() 时记下客户端 ctx：插槽组件拿不到 ctx，靠它取 uiWorkspace.openSession 打开新分支。
+    let clientCtx = null
 
     const CSS = `
 [data-mc-status]{display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 6px 0 10px;
@@ -115,6 +121,14 @@ window.__ModuleLoader__.load({
 /* 新会话页那个按钮是插进 hero 行、贴在模式芯片右边的（那一行 gap:2px，这里再给点间距） */
 [data-whale-craft-mc-settings]{margin-left:6px;}
 [data-slot="conversation.session.header.actions"] [data-wc-btn]:first-child{margin-left:8px;}
+
+/* ── 「创建MC+分支」：仿原生消息操作图标按钮（挂在 assistant-actions 插槽，只出图标）────── */
+[data-wc-plus-branch]{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
+  padding:0;border:0;border-radius:6px;background:transparent;cursor:pointer;font-family:inherit;
+  color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}
+[data-wc-plus-branch]:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));
+  color:var(--dsw-alias-label-primary);}
+[data-wc-plus-branch]:disabled{opacity:.5;cursor:default;}
 
 /* ── 模态框 ────────────────────────────────────────────────────────────── */
 [data-wc-overlay]{position:fixed;inset:0;z-index:1000;background:var(--dsw-alias-bg-mask-1,rgba(0,0,0,.45));
@@ -2386,11 +2400,94 @@ select[data-wc-in]{appearance:none;padding-right:22px;
     }
 
     /* ==================================================================
+     * 「创建MC+分支」：挂在原生「分支」旁边（conversation.chat.assistant-actions 插槽）
+     * ----------------------------------------------------------------
+     * 只在 **preset ∈ {standard, minecraft}**（标准模式 / MC模式）时出现；点它 = fork 一条分支，
+     * 并把**新会话**改成 MC+ 模式。真正干活的是后端 `/api/mc/branch-plus`
+     * （DSH 分支会**继承父 preset**、且 `agentPresets.select` 开了 turn 就锁，改模式只能绕锁 —— 见 index.js）。
+     * 取的是**本地** preset（`props.useSessions` 快照，与官方模式标签同源），不受网络成败影响。
+     * ================================================================== */
+    const PLUS_BRANCH_FROM = ['standard', 'minecraft']
+
+    function usePlusBranchGate(props) {
+      const sessionId = props?.sessionId ?? props?.session?.id
+      const useSessions = props?.useSessions
+      const sess = typeof useSessions === 'function' ? useSessions : null
+      const preset = sess
+        ? sess((state) => {
+          const v = state?.byId?.[sessionId]?.projectionValues?.agentPreset
+          return typeof v === 'string' ? v : undefined
+        })
+        : undefined
+      return typeof preset === 'string' && PLUS_BRANCH_FROM.includes(preset)
+    }
+
+    /**
+     * 立方体图标：取自开源图标库 **Lucide** 的 `box`（ISC 许可，见 THIRD_PARTY_NOTICES.md）。
+     * 🔴 这是本插件**唯一**一个非 DSH 官方图标 —— 官方图标集里没有立方体。本 bundle 无构建步骤、
+     *    不引运行时依赖，所以按约定**内联它的 path 数据**（不改路径；只把 24×24 的 viewBox 配 1.5 描边，
+     *    渲染到 16px 时约合官方 1px 观感）。
+     */
+    const CUBE_PATHS = [
+      'M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z',
+      'm3.3 7 8.7 5 8.7-5',
+      'M12 22V12',
+    ]
+    function CubeIcon({ size = 16 }) {
+      return React.createElement('svg', {
+        width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true',
+      }, CUBE_PATHS.map((d, i) => React.createElement('path', { key: i, d })))
+    }
+
+    function McPlusBranchAction(props) {
+      const show = usePlusBranchGate(props)
+      const [busy, setBusy] = React.useState(false)
+      if (!show) return null
+      const sessionId = props?.sessionId ?? props?.session?.id
+      const label = '创建 MC+ 分支'
+      const onClick = () => {
+        if (busy || !sessionId) return
+        setBusy(true)
+        fetch('/api/mc/branch-plus', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({ sessionId, messageId: props?.messageId }),
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((j) => {
+            if (!j?.ok) {
+              // 后端改模式失败会自动回撤刚建的分支；这里把原因告诉用户（别再给个"假 MC+ 分支"）。
+              const msg = [j?.error, j?.hint].filter(Boolean).join('\n\n')
+              if (msg) window.alert(msg)
+              return
+            }
+            if (!j.sessionId) return
+            const uiWorkspace = clientCtx?.get?.('uiWorkspace')
+            if (uiWorkspace && typeof uiWorkspace.openSession === 'function') uiWorkspace.openSession(j.sessionId)
+          })
+          .catch(() => { window.alert('创建 MC+ 分支失败：请求未送达或被中断。') })
+          .finally(() => setBusy(false))
+      }
+      const btn = React.createElement('button', {
+        type: 'button',
+        'data-wc-plus-branch': '',
+        className: 'wc-plus-branch',
+        'aria-label': label,
+        title: label,
+        disabled: busy || undefined,
+        onClick,
+      }, React.createElement(CubeIcon, { size: 16 }))
+      return TooltipPrimitive ? React.createElement(TooltipPrimitive, { label, side: 'bottom' }, btn) : btn
+    }
+
+    /* ==================================================================
      * apply
      * ================================================================== */
     return {
       inject: ['slots'],
       apply(ctx) {
+        clientCtx = ctx
         const style = document.createElement('style')
         style.setAttribute('data-plugin-css', 'whale_craft')
         style.textContent = CSS
@@ -2432,6 +2529,13 @@ select[data-wc-in]{appearance:none;padding-right:22px;
         ctx.slots.inject('plugins.detail.actions', () => ctx.slots.register(
           { name: 'plugins.detail.actions', id: 'whale_craft-mc-settings-detail', order: 20 },
           McSettingsDetailEntry,
+        ))
+
+        // 「创建MC+分支」：挂在原生「分支」旁边的消息操作行（session 作用域）。
+        // 门控 = 本地 preset ∈ {standard, minecraft}（见 usePlusBranchGate）。
+        ctx.slots.inject('conversation.chat.assistant-actions', () => ctx.slots.register(
+          { name: 'conversation.chat.assistant-actions', id: 'whale_craft-plus-branch', order: 10 },
+          McPlusBranchAction,
         ))
 
         // 只做一次性清理：摘掉历史版本用 MutationObserver 注入的按钮。

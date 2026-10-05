@@ -173,11 +173,24 @@ kind 变化先 release 再套新）：
 | `/api/mc/servers`（GET/POST/DELETE） | 「连接到MC」的**服务器历史**（全局 `<状态目录>/servers.json`，只存地址字符串；**不走闸门**） |
 | POST `/api/mc/lan` | 「连接到MC」的**局域网探测**（后端多播监听 + 逐个 `statusPing` 拿在线人数；**不走闸门**） |
 | POST `/api/mc/connect` | 「连接到MC」点连接：**注入 + `agent.steer` 让该会话跑一轮**（**不自己连**，由 LLM 调 `mc_connect`）；**手动**连接才记历史。`asUser:true`（新对话页）→ 投**玩家消息**（`kind:'user'`，正文前 `[system] `）；否则走插件提示行 |
+| POST `/api/mc/branch-plus` | 「创建MC+分支」：**fork 一条分支 + 把新会话改成 MC+**（`{sessionId, messageId}`；`messageId` 反查 `atSeq` 对齐原生落点）。见下 |
 | GET/HEAD `/api/whale-craft/express/<工作区uuid>/<相对路径>` | 发布区文件（仅 online 模式） |
 
 - **设置类 API 的错误形态统一 200 + `{ok:false, error, needUserAction?, hint?}`**（前端 `apiFetch` 要求 `payload.ok===true`）。
 - **「连接到MC」的注入时机（2026-10-04）**：`/api/mc/connect` 只**注入 + 唤醒**——`sess.interruptWait('connect')` → `agent.steer(message)`（空闲起一轮、运行中插话）。正文由 `src/connect-prompt.mjs` 组装（追加插槽 `CONNECT_PROMPT_APPENDERS`）。历史只记 `via!=='lan'` 的地址（`src/serverhistory.mjs`，全局 `servers.json`）。
   ⚠️ **对话中**用插件提示行（`source.kind='plugin:whale_craft'` + notice，**绝不冒充用户**）；**新对话页**（`asUser:true`）改用**玩家消息**（`kind:'user'` + 正文前 `[system] `）——用户明确要求的例外，因为在全新会话里插件提示行不触发那一轮。
+- **「创建MC+分支」的改模式机制（2026-10-05）**：`POST /api/mc/branch-plus` 在宿主侧做三件事——
+  ① `ctx.get('sessionController').fork({sessionId, atSeq})`；② 把新会话的 preset 改成 `minecraft-plus`；
+  ③ 标题 +1（对齐原生分支「标题 (2)」，失败无妨）。`atSeq` 由 `messageId` 反查（`sessionQuery.observeSession`
+  里 `data.message.id === messageId` 的事件 seq，对齐原生 `forkAt(data.seq)`）；查不到就让宿主取"最后一个完整轮次"。
+  🔴 **为什么必须绕锁**：宿主 `session.fork` 内 `composeAgent(presetForObservation(source))` ⇒ 分支**继承父 preset**；
+  而 `agentPresets.select` 一旦会话跑过 turn 就抛 `agent-preset/locked`（分支子会话带继承历史，必中）。所以走
+  **`agentPresets.recompose(ctx, id)`（重绑）+ `agent.session.append('agent-preset/selected', …)`**——这正是宿主
+  `select` 内部的两步，只是不放那道锁。⚠️ 属宿主内部接口，升级后复核（见 §13 第 11 条）。
+  🔴 **改完必须复验 + 失败回撤**：重绑后读 `agentPresets.composedPreset(child.ctx)`，**必须等于** `minecraft-plus`，
+  否则视为失败（只 `try/catch` 不够——这套绕锁法可能悄悄不生效）。失败则**回撤**：用 `workspaceRegistry.archiveSession(childId)`
+  把刚建的分支收走（DSH **没有**"删会话"接口，UI 也只有归档；可 unarchive 找回），回 `{ok:false, error, hint, rolledBack}`；
+  前端据此弹错误、**不打开**该会话。源会话全程不受影响。
 - **设置两类模式（2026-10-04）**：`resolveWorkspaceCwd` 解析 sessionId → 工作区（或 client 报的 cwd），**可空、不建档**；`settingsGate` = 它 + 查不到就 400 + `ensureMemoryRootForCwd`（"点开 MC设置"是仅有的两个建记忆目录时机之一）。**accounts / authservers 是全局数据、不走闸门**；`/api/mc/config` 与 `agents-md` GET **可无工作区**（前者只回全局键、工作区键为 `null`；后者只读回内置默认）。`/api/mc/express` 仍必须有工作区。
   🔴 无工作区时**绝不能**把 `null` 喂给 `wsCfgValues` / `memoryRootFor` —— `memoryRootFor(null)` 会兜底到 `stateDir(/memory)` 这个**全局**目录。
 - **express 路由安全**：uuid 是 DSH 工作区注册表的**稳定 id**（查不到就 404，**不退回目录名**）；路径**逐段**白名单拼接（`..`/`.`/空段/段内分隔符/盘符/`~`/控制字符一律拒）→ 拼完 `realpath` 复查仍在发布区内（**符号链接也出不去**）；不列目录；单文件 ≤32MB；svg/html 加 `Content-Security-Policy: sandbox`。
@@ -226,6 +239,7 @@ kind 变化先 release 再套新）：
 8. `hosts`/`trustedHosts`、`webServer` 最长前缀路由。
 9. jobs 服务的 `owner`/`caller` 语义：**只认会话 id 字符串**（`resolveOwner()` 拿它查 agents 注册表、`assertAccess()` 按 `job.owner.id === caller` 比对）；`stopSession` 只杀自己名下的（无主 job 对所有会话可见，别碰）。
 10. 会话消息 `source.kind`：**v4 格式拒绝裸露的 `'plugin'`**，规范值是 `plugin:<插件名>`（= 宿主 v3→v4 迁移的产出，`plugin` 字段随之去掉）；宿主 `createUserMessage` 对传进来的 source **原样透传**、不会替我们修正。
+11. **「创建MC+分支」的改模式**（2026-10-05）：`sessionController.fork`（会**继承父 preset**）、`agentPresets.recompose(ctx, id)`（返回 `{id}`；文档说"caller owns the blank-session check"，即它自己**不**拦已开聊）、`agent.session.append('agent-preset/selected', {agentPreset})`（宿主唯一会**拦** preset 变更的是 `select` 里的 `agent-preset/locked`，`append` 本身不拦）。三者任一改名/改语义就要跟。`AgentPresetRegistry` 的 preset 投影/事件仍是 `agent-preset/selected`。
 
 ## 14. DSH 插件页（0.2.0+）：名称/描述 与 设置入口
 

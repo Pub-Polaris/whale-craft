@@ -1284,6 +1284,104 @@ export function apply(ctx, rawConfig) {
     }
   }
 
+  /** 分支标题 +1（保留半角/全角括号），与宿主 `ClientSessions.fork` 的 `increaseTitle` 同款。 */
+  const increasedForkTitle = (title) => {
+    const s = String(title ?? '')
+    const ascii = /^(.*?)\((\d+)\)$/u.exec(s)
+    if (ascii?.[1] !== undefined && ascii[2] !== undefined) return `${ascii[1]}(${BigInt(ascii[2]) + 1n})`
+    const full = /^(.*?)（(\d+)）$/u.exec(s)
+    if (full?.[1] !== undefined && full[2] !== undefined) return `${full[1]}（${BigInt(full[2]) + 1n}）`
+    return `${s} (1)`
+  }
+
+  /* ── 「创建MC+分支」：fork 一个分支，并把**新会话**的模式改成 MC+ ──────────────────
+   * 原生「在新对话中分支」会**继承父会话的 preset**（宿主 fork 内 `composeAgent(presetForObservation(source))`），
+   * 而 `agentPresets.select` 在**会话已经跑过 turn 后拒绝**（报 `agent-preset/locked`）——分支子会话带着
+   * 继承来的历史，正好命中这条锁。所以这里 fork 完后**直接改 preset**：走宿主 select 内部**同样的两步**
+   * （`recompose` 重绑 + 追加 `agent-preset/selected` 事件），只是不经过那道锁。
+   * ⚠️ `recompose`/`session.append` 属宿主内部接口，宿主升级后要复核（见 agent-docs/architecture.md §13）。
+   * atSeq 由 messageId 反查（对齐原生 `forkAt(data.seq)`）；查不到就交给宿主取"最后一个完整轮次"。
+   */
+  const forkMcPlusBranch = async (sessionId, messageId) => {
+    const sc = ctx.get('sessionController')
+    if (typeof sc?.fork !== 'function') return { ok: false, error: '宿主不支持分支（sessionController 未就绪）' }
+    const agents = ctx.get('agents')
+    // `sessionQuery.observeSession` 返回的是**可释放资源**——读完必须 dispose，别漏句柄。
+    const withObserved = async (id, fn) => {
+      const q = ctx.get('sessionQuery')
+      if (typeof q?.observeSession !== 'function') return undefined
+      const obs = await q.observeSession(id)
+      try { return await fn(obs) } finally { try { obs?.[Symbol.dispose]?.() } catch { /* 尽力而为 */ } }
+    }
+    let atSeq
+    if (messageId) {
+      try {
+        await withObserved(sessionId, (obs) => {
+          const events = obs?.events ?? []
+          for (let i = events.length - 1; i >= 0; i--) {
+            if (events[i]?.data?.message?.id === messageId) { atSeq = events[i].seq; break }
+          }
+        })
+      } catch { /* 拿不到就用默认边界 */ }
+    }
+    let childId
+    try {
+      const forked = await sc.fork({ sessionId, ...(atSeq === undefined ? {} : { atSeq }) })
+      childId = String(forked?.sessionId ?? '')
+    } catch (e) { return { ok: false, error: `分支创建失败：${e?.message ?? e}` } }
+    if (!childId) return { ok: false, error: '分支创建失败' }
+
+    const target = 'minecraft-plus'
+    let presetApplied = false
+    let presetError = null
+    try {
+      const child = agents?.get?.(childId)
+      const presets = (child && child.ctx?.get?.('agentPresets')) ?? agentPresetsSvc ?? ctx.get('agentPresets')
+      if (child && typeof presets?.recompose === 'function' && typeof child.session?.append === 'function') {
+        const preset = await presets.recompose(child.ctx, target)
+        const resolved = String(preset?.id ?? target)
+        child.session.append('agent-preset/selected', { agentPreset: resolved })
+        // **复验**：重绑后 live 值必须真是 MC+（`composedPreset` 拿不到就信 recompose 的返回）。
+        // 只 catch 不验是不够的——这一步本就是"绕锁的野路子"，要当场确认它真生效。
+        const got = typeof presets.composedPreset === 'function' ? presets.composedPreset(child.ctx) : resolved
+        presetApplied = got === resolved
+        if (!presetApplied) presetError = `重绑后实际为 ${String(got)}，不是 ${resolved}`
+      } else presetError = '拿不到新会话的 agent/preset 服务'
+    } catch (e) { presetError = e?.message ?? String(e) }
+
+    if (!presetApplied) {
+      /* 🔴 **回撤**：刚 fork 出来的分支**不许留着**——否则用户点了「创建MC+分支」却拿到一个普通分支。
+       *    DSH 没有"删会话"接口（UI 也只有"归档"）⇒ 用 `archiveSession` 收走（可 unarchive 找回）。
+       *    源会话不受影响；前端据 `ok:false` 弹错误。 */
+      let rolledBack = false
+      try {
+        const wsReg = ctx.get('workspaceRegistry')
+        if (typeof wsReg?.archiveSession === 'function') { await wsReg.archiveSession(childId); rolledBack = true }
+      } catch (e) { logLine(`创建MC+分支：回撤（归档）失败：${e?.message ?? e}`) }
+      const notFound = /not-found|unknown agent preset/i.test(String(presetError))
+      return {
+        ok: false,
+        error: `没能把新会话切到 MC+ 模式：${presetError ?? '未知原因'}`,
+        hint: notFound
+          ? 'MC+ 模式（preset id：minecraft-plus）没装或没注册——先确认 whale_craft 的 preset 已随插件加载。'
+          : (rolledBack ? '已回撤这次分支，源会话不受影响。可稍后重试，或手动新建一个 MC+ 会话。'
+            : '这次分支**没能自动回撤**，会话列表里可能多出一个普通会话，可自行忽略/归档。'),
+        rolledBack,
+        ...(rolledBack ? {} : { sessionId: childId }),
+      }
+    }
+
+    // 标题 +1（对齐原生分支的「标题 (2)」）；失败不影响主流程
+    try {
+      const title = await withObserved(sessionId, (obs) => obs?.header?.title)
+      if (typeof title === 'string' && title && typeof sc.rename === 'function') {
+        await sc.rename({ sessionId: childId, title: increasedForkTitle(title) })
+      }
+    } catch { /* 锦上添花，失败无妨 */ }
+
+    return { ok: true, sessionId: childId, preset: target, presetApplied, presetError }
+  }
+
   const handleMcApi = async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost')
     const path = url.pathname
@@ -1433,6 +1531,19 @@ export function apply(ctx, rawConfig) {
       agent.steer(message)
       logLine(`连接到MC：已${asUser ? '投递玩家消息' : '注入提示词'}（${address}｜${accountLabel}｜via=${via}）`)
       return sendJson(res, 200, { ok: true, injected: true, asUser, address, account: accountLabel })
+    }
+
+    /* ── 「创建MC+分支」：fork 一条分支 + 把新会话模式改成 MC+（详见 forkMcPlusBranch）── */
+    if (req.method === 'POST' && path === '/api/mc/branch-plus') {
+      const body = await readJsonBody(req)
+      const sessionId = String(body.sessionId ?? '')
+      const messageId = body.messageId === undefined || body.messageId === null ? undefined : String(body.messageId)
+      if (!sessionId) return sendJson(res, 400, { ok: false, error: 'sessionId 必填' })
+      const out = await forkMcPlusBranch(sessionId, messageId)
+      logLine(out.ok
+        ? `创建MC+分支：${sessionId} → ${out.sessionId}（preset=${out.preset}${out.presetApplied ? '' : `｜未生效：${out.presetError}`}）`
+        : `创建MC+分支失败：${out.error}`)
+      return sendJson(res, 200, out)
     }
 
     /* ── 「MC设置」模态框用的接口（门控名单 / 账户 / 认证服务器 / 白名单 / 提示词 / 文件分享 / 服务器历史与探测）──
