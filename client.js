@@ -187,12 +187,18 @@ window.__ModuleLoader__.load({
 [data-wc-cn-bubbles]{display:flex;flex-wrap:nowrap;gap:8px;overflow-x:auto;padding-bottom:2px;}
 [data-wc-cn-bubble]{flex:none;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 6px 0 12px;
   border-radius:999px;background:var(--dsw-alias-bg-overlay,rgba(128,128,128,.14));
-  font-size:12px;white-space:nowrap;color:var(--dsw-alias-label-primary);}
+  font-size:12px;white-space:nowrap;color:var(--dsw-alias-label-primary);cursor:pointer;
+  transition:background .12s;}
+[data-wc-cn-bubble]:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.28));}
 [data-wc-cn-bubblex]{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;padding:0;
   border:0;background:transparent;border-radius:999px;cursor:pointer;color:var(--dsw-alias-label-tertiary);}
 [data-wc-cn-bubblex]:hover{background:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-label-primary-foreground,#fff);}
 /* 探测中：三方块一行、文案另起一行（**各占一行**，都水平居中） */
-[data-wc-cn-probe]{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:10px 0;
+/* 🔴 探测区**定高**（min-height 容器 + 固定高的 probe）：探测动画消失（转空或转列表）时
+ *    高度不塌，body 又是垂直居中，否则地址行会跟着往下跳。列表更高时正常往下撑。 */
+[data-wc-cn-lanarea]{min-height:54px;display:flex;flex-direction:column;justify-content:center;}
+[data-wc-cn-probe]{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+  height:54px;box-sizing:border-box;padding:10px 0;line-height:18px;
   color:var(--dsw-alias-label-tertiary);font-size:12px;}
 [data-wc-cn-dots]{display:flex;align-items:center;gap:8px;}
 [data-wc-cn-dot]{width:8px;height:8px;border-radius:2px;background:currentColor;opacity:.2;
@@ -1784,6 +1790,7 @@ select[data-wc-in]{appearance:none;padding-right:22px;
       const [error, setError] = React.useState('')
       const [settingsOpen, setSettingsOpen] = React.useState(false)
       const pickRef = React.useRef(null)
+      const inputRef = React.useRef(null)
 
       // 打开时：拉账户 + 历史，并发探测局域网（关闭就丢弃结果）
       React.useEffect(() => {
@@ -1884,7 +1891,7 @@ select[data-wc-in]{appearance:none;padding-right:22px;
             h('div', { 'data-wc-cn-fieldlabel': '' }, '服务器地址'),
             h('div', { 'data-wc-cn-row': '' },
               h('input', {
-                'data-wc-cn-input': '', value: address, spellCheck: false, disabled: busy,
+                'data-wc-cn-input': '', ref: inputRef, value: address, spellCheck: false, disabled: busy,
                 placeholder: 'example.com 或 example.com:25565',
                 onChange: (e) => setAddress(e.target.value),
                 onKeyDown: (e) => { if (e.key === 'Enter') connect(address, 'manual') },
@@ -1894,16 +1901,24 @@ select[data-wc-in]{appearance:none;padding-right:22px;
                 onClick: () => connect(address, 'manual'),
               }, h(RunIcon, { size: 14 }), '连接')),
           ),
-          // ② 历史气泡行
+          // ② 历史气泡行：点气泡**填入地址栏**（不直接连），× 移除（别冒泡到气泡）
           servers.length
-            ? h('div', { 'data-wc-cn-bubbles': '' }, servers.map((addr) => h('span', { key: addr, 'data-wc-cn-bubble': '' },
-              h('span', null, addr),
-              h('button', {
-                type: 'button', 'data-wc-cn-bubblex': '', title: '移除这条历史', 'aria-label': '移除',
-                onClick: () => removeServer(addr),
-              }, IconCloseOutlineRegular ? h(IconCloseOutlineRegular, { size: 11 }) : '×'))))
+            ? h('div', { 'data-wc-cn-bubbles': '' }, servers.map((addr) => h('span', {
+              key: addr, 'data-wc-cn-bubble': '', role: 'button', tabIndex: 0, title: '点击填入地址',
+              onClick: () => { setAddress(addr); inputRef.current?.focus() },
+              onKeyDown: (e) => {
+                if (e.target !== e.currentTarget) return
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAddress(addr); inputRef.current?.focus() }
+              },
+            },
+            h('span', null, addr),
+            h('button', {
+              type: 'button', 'data-wc-cn-bubblex': '', title: '移除这条历史', 'aria-label': '移除',
+              onClick: (e) => { e.stopPropagation(); removeServer(addr) },
+            }, IconCloseOutlineRegular ? h(IconCloseOutlineRegular, { size: 11 }) : '×'))))
             : null,
-          // ③ 探测中 → ④ 局域网行
+          // ③ 探测中 → ④ 局域网行（定高容器，见 CSS：转空/转列表时地址行不跳）
+          h('div', { 'data-wc-cn-lanarea': '' },
           lan === null
             ? h('div', { 'data-wc-cn-probe': '' },
               h('div', { 'data-wc-cn-dots': '' },
@@ -1930,7 +1945,7 @@ select[data-wc-in]{appearance:none;padding-right:22px;
                   : null,
                 // 运行图标：**无缝嵌在卡片里**（不是独立按钮）
                 h('span', { 'data-wc-cn-run': '' }, h(RunIcon, { size: 16 })))))
-                : null),
+                : null)),
         ),
         // ⑤ 配置卡片行：**固定在底部的 footer**（与上方内容之间留白）
         h('div', { 'data-wc-cn-foot': '' },
