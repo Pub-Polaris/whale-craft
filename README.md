@@ -1,180 +1,82 @@
-# Whale Craft
+# Whale Craft / 鲸鱼工艺
 
 **[English ↓](#english)** · 中文 · [![CI](https://github.com/yzi1b/whale-craft/actions/workflows/ci.yml/badge.svg)](https://github.com/yzi1b/whale-craft/actions/workflows/ci.yml)
 
-**让 AI Agent 真的进 Minecraft 里玩** —— 一个 DSH（DeepSeek Harness）原生插件：
-把一台无头 Minecraft 机器人（mineflayer）跑在 DSH 进程里，给模型一套 `mc_*` 工具去走路、挖建、说话、
-看图、记事，并在"值得你注意"的时候把它叫醒。
+**让 DSH 玩 MC** —— 一个 DSH（DeepSeek Harness）原生插件
+把一台无头 Minecraft 机器人（mineflayer）跑在 DSH 进程里，让它进入到MC服务器中，通过工具调用与世界和玩家交互，完成创造、生存任务。
 
 - 🎮 **每会话一个独立机器人**：不同对话可以连不同服务器、用不同账号，互不干扰
-- 👀 **能看世界**：字符地形图（省 token、坐标精确）与**真图像**（`mc_map{format:"image"}`）双通道
-- 🔔 **单脑看门狗**：事件只走 `mc_watch` 一条通道 —— 空闲时唤醒、生成中插话（**提示词注入，不模拟用户发言**）。
-  玩家说话**不论走签名聊天、未签名聊天，还是被服务端塞进 system 位置**都认得出来
-- 🧠 **长期记忆**：`<工作区>/.whale-craft/` 文档树，索引由 AI 维护，**会话开始时**自动带进上下文
-- 🖥️ **自带浏览器 UI**：状态条（显示连的哪个服）+「强制停止」+「MC设置」（账户 / 指令白名单 / 提示词）
-- 🔒 **密码不进模型上下文**：凭据只写宿主凭据库；账户在「MC设置」里维护
-- 📢 **版本硬提示词**：随插件版本发布的固定提示（"本版本哪些工具还不成熟、怎么把文件给用户看"），
-  不可编辑、也不用配 —— 在「MC设置 → 提示词」里可以展开看原文
+- 👀 **看到这个世界**：地形图、高度图，以及方块、实体探索工具，帮助AI了解这个世界
+- 🔔 **单代理+看门狗**：使用一个主代理作为“大脑”，使用看门狗接收事件、记录消息。适时唤醒、打断AI，确保助理及时相应发生的各种事件，如玩家召唤
+- 🧠 **长期记忆**：`<工作区>/.whale-craft/` 文档树，由助理自动维护，保证工作、冒险的可持续性
+- 🖥️ **友好的 UI**：游戏状态条、停止按钮、MC设置，以及一键连接到MC，简单易用
+- 🔒 **账户安全**：支持离线账户、第三方皮肤站账户。凭据写在宿主配置中，AI不会直接拿到，使用类似“凭据管理器”的机制进行操作
+- 📢 **提示词调优**：插件内置提示词，教会AI如何与AI交互，如何存储记忆等，也提供“建出好建筑”的建议、引导。部分提示词还可自由修改
+
+> ⚠️ **当前为预览版 `0.2.0-beta.1`**
+>
+> 预览版，面向 DSH **0.2.0-rc.2 及以上**。0.2.0 正式版功能尚未全部完成，本版本先行发布已完成功能，以及支持 DSH 0.2.0-rc.2 和 DSH Desktop。**预览版可能存在未知问题，如遇到请向我们反馈。**
+>
+> ⚠️ **相对于 0.1 的破坏性变更**
+>
+> 1. 插件现要求DSH最低版本为 0.2.0-rc.2，不再支持更低版本。*解决方案：将你的DSH升级至 0.2.0-rc.2 及以上版本。*
+> 2. 除了MC和MC+模式外，其余模式无法再调用MC游戏相关工具。*解决方案：将需要使用MC工具的会话迁移到MC+模式，找到助手的最后一个回答，点击“方块”图案的“创建MC+分支”按钮。*
+> 3. 此前对Minecraft 26.2的临时支持已移除。*解决方案：等待后续版本。MineFlayer支持Minecraft 26.2后，我们会及时跟进。*
 
 ---
 
-## 使用
+## 开始使用
 
-1. 创建新对话，选中「MC模式」（只玩 MC 时）或「MC+模式」（除 MC 工具外，还要标准模式的全部工具时）。
-2. **选中或新建一个工作区**（记忆与提示词都放在它的 `.whale-craft/` 里）。
-3. 如有必要，进入「MC设置」修改玩家名称，或使用第三方皮肤站登录。
-4. 对你的 AI 说「进 xx 服务器」。
-5. 在对话窗口下命令，或直接在游戏里聊天。
-
-> 想让 AI 进**局域网房间**？直接说"找个局域网服务器"——它用 `mc_lan` **只听**原版那个局域网公告
-> （`224.0.2.60:4445`，恒定几秒返回），拿到地址后用 `mc_connect` 进去（对方要先在游戏里「对局域网开放」）。
-
-> 🔴 **必须选工作区**：每个会话都要在**工作区**里跑 —— `.whale-craft/`（记忆 + 提示词）就建在那儿。
-> 插件只在两个时刻去备好它：**首次进入 MC 模式会话**、或**点开「MC设置」**（不会在你没玩 MC 的普通会话里乱建目录）。
-> **没有选中工作区时**：服务端**不把该会话当 MC 模式**（不套工具隔离、不注入专属提示词、不建 `.whale-craft/`），
-> 「MC设置」的接口也会拒绝并说明原因。界面上的表现是：**新对话页还没连接工作区时（此时还没有会话）
-> 不显示「MC设置」按钮**；一旦有了会话，按钮只按"是不是 MC 模式"显示，工作区是在**点它的那一刻**才检查的
-> （没选就提示你先选）。
+1. 创建新对话，选中或新建一个工作区，选择“MC模式”；
+2. 点击“连接到MC”按钮，选择好游戏账户，输入服务器地址并点击“连接”，或者点击连接到一个局域网服务器。
+3. 在对话窗口下命令，或直接在游戏里聊天。
 
 ---
 
 ## 要求
 
-| 项 | 要求 |
-| --- | --- |
-| DSH | 已发布在 npm（`@deepseek-ai/dsh`）；本插件只用公开契约（`dsh.bundle.patch` + `exports["./client"]`） |
-| Node | ≥ 22（跟 DSH 一致） |
-| Minecraft 机器人 | `mineflayer`，插件的**直接依赖** —— 跟着一起装好，不用你动手 |
-| 宿主包（可缺省） | `@deepseek-ai/dsh-tools` / `@deepseek-ai/schemastery` **拿不到也能跑**：有宿主就复用宿主那份；拿不到（如官方 dsh-desktop）自动退化成插件自带的等价实现 —— 不用装任何东西 |
-| 可选 | `sharp`（SVG→PNG 光栅化）—— 装不上只影响 `mc_kit_image` 的渲染，其它功能照常 |
+
+| 项   | 要求                                                                    |
+| ---- | ----------------------------------------------------------------------- |
+| DSH  | 版本`>=0.2.0-rc.2 <0.3.0`                                               |
+| Node | ≥ 22（与 DSH  要求一致）                                               |
+| 可选 | npm `sharp`（SVG→PNG 光栅化）用于 `mc_kit_image` 的渲染，不影响其它功能 |
 
 ---
 
 ## 安装
 
-> 对你的 AI 说：`帮我安装插件 https://github.com/yzi1b/whale-craft`
+> ⚠️ 需要重启
+>
+> 无论你从何种方式安装本插件，安装完成后，为保证所有功能正常，务必完全重启DSH实例。
+
+对你的 AI 说：`帮我安装插件 npm:whale_craft@^0.2.0-beta.1`
+
+### DSH 插件管理
+
+在 DSH 主界面找到“插件”，点击打开插件页面，点击“添加插件”按钮，在输入框中输入 `whale_craft@^0.2.0-beta.1`，点击安装。
 
 ### 手动安装
 
-whale_craft 是**标准 DSH 插件**：包自带 `cordis.patch.yml`（`package.json` 里声明了 `dsh.bundle.patch`），
-只要把包名列进 profile 的 `dsh.profile.bundles` 即生效，**不需要手改 profile 的补丁文件**。
+本插件的 github 地址为 https://github.com/yzi1b/whale-craft ，npm 包名为 `whale_craft`。
+
+历史遗留原因，npm包名使用下划线，应当注意到仓库名和包名的不同，以免安装错误。
+
+> 此处 profile 以 web 为例。DSH Desktop 的 profile 为 desktop，如果你使用了自己定义的 profile，情况有所不同。
+
+从 github 仓库安装：
 
 ```bash
-# 从 GitHub 装（npm 上的包名是 whale_craft，仓库名是 whale-craft）
 dsh plugin --profile web add github:yzi1b/whale-craft
-dsh plugin --profile web add whale_craft          # 发布到 npm 之后
-
-# 或从本地目录装
-dsh plugin --profile web add link:/path/to/whale-craft
 ```
 
-这条命令把包装进 profile，并把 `whale_craft` 加进 `dsh.profile.bundles`。
-**然后重启 DSH**（服务端插件不热重载；浏览器端 bundle 是热重载的）。
+从 npm 安装：
 
----
+```bash
+dsh plugin --profile web add whale_craft@^0.2.0-beta.1
+```
 
-## 落盘位置
-
-| 东西 | 位置 |
-| --- | --- |
-| 全局配置 | `$DSH_HOME/whale_craft/config.json` |
-| 账户元数据 | `$DSH_HOME/whale_craft/accounts.json` |
-| 插件日志 | `$DSH_HOME/whale_craft/logs/whale-craft.log`（可用 `MC_LOG` 覆盖） |
-| 会话锁（连服期间） | `$DSH_HOME/whale_craft/.instance.<会话>.json` |
-| **记忆 / 提示词** | **`<会话工作区>/.whale-craft/`**：`README.md`（AI 维护的总索引）+ `RULES.md`（行事准则）+ 任意文档/图片 |
-| **按工作区的配置** | `<会话工作区>/.whale-craft/config.json`（提示词三个开关 + 版本标记；对 MC模式 AI **只读**，MC+ 按宿主默认） |
-| 出图与发布 | `<会话工作区>/.whale-craft/.out/`（**不对外**）· `<会话工作区>/.whale-craft/.express/`（可访问，见下） |
-
-> 记忆是**按会话工作区**的，与插件装在哪、DSH 装在哪都无关。
-> `.whale-craft/` 里的东西**只读写文件，不执行任何东西**。
-
----
-
-## 配置
-
-「MC设置」入口有**两个，按会话状态互斥**（任何时刻只出现一个）：**新会话页**上贴在**模式芯片的右边**；
-**已有会话**时落在**对话标题条的操作区**。点开就是账户 / 指令白名单 / 提示词 / 文件分享四个标签页。
-改完立即生效。配置分两层：
-
-- **全局**（`$DSH_HOME/whale_craft/config.json`）：**普通模式与 MC+模式**下的 AI 可以用 `mc_admin_config` 工具改
-  （**MC 模式会话看不见、也调不动它**）：
-
-| 键 | 含义 | 默认 |
-| --- | --- | --- |
-| `commandWhitelist` | `mc_command` 放行的服务器指令。支持精确名 `"tp"`、正则 `"/^gi.+/"`、`"*"` 全放行 | tp/give/time/… |
-| `allowAllCommands` | 指令白名单页那个总开关 | `false` |
-| `mcModePresets` | 哪些 preset 算"MC 类模式"（含 MC+；权限隔离与提示词注入的判据） | `["minecraft","minecraft-plus","whale_craft"]` |
-| `mcPlusPresets` | 其中哪些是 **MC+ 变体**（开放标准模式全部工具） | `["minecraft-plus"]` |
-| `mcMode.allowOtherTools` | MC 模式白名单里**额外**放行的其它工具（默认只给 `mc_*` / `mc_kit_*` / 文件工具 / `present`；MC+ 不适用——它本来就不限制） | `[]` |
-| `mcMode.hideAdminTools` | 是否把 `mc_admin_*` 也放进 MC 模式的白名单（默认隐藏，另有 guard 硬拒；MC+ 可见） | `true` |
-| `expressEnabled` | 文件分享开关（「文件分享」页那个开关）：`true` 开 / `false` 关。老配置的 `expressMode` 会自动搬过来 | `false` |
-| `expressBase` | 文件分享的 base（你访问这台 DSH 的地址，可带路径前缀） | `""` |
-| `exposeDebugTools` | 「调试」页的「开放助手调试工具」开关（工作区无关）：是否向助手暴露调试用途的工具 | `false` |
-| `memoryDir` | 记忆根目录（`null` = 用会话工作区的 `.whale-craft/`） | `null` |
-| `ensureMcPreset` | **旧宿主遗留**：0.2.0-rc.2+ 的 preset 由包内 `presets/*.patch.yml` 声明提供，这个自动创建开关在新宿主上是 no-op | `true` |
-
-- **按工作区**（`<工作区>/.whale-craft/config.json`，与 RULES.md 同目录；在「MC设置 → 提示词」页改，
-  对 MC模式的 AI **只读**、MC+ 按宿主默认）：每个工作区独立一份，互不影响。
-
-| 键 | 含义 | 默认 |
-| --- | --- | --- |
-| `injectWhaleCraftAgentsMd` | 是否把 `.whale-craft/RULES.md`（行事准则）注入 MC 模式会话 | `true` |
-| `injectWorkspaceAgentsMd` | 是否**额外**注入工作区根上的 `AGENTS.md` | `false` |
-| `rulesFollowVersion` | 「提示词」页的「随版本更新」：插件版本一变，就用新版本默认准则**替换** `.whale-craft/RULES.md` | `true` |
-| `rulesVersion` | 插件写：当前 `RULES.md` 对应哪个插件版本（旧工作区里单独的 `.rules-version` 标记会自动迁移进来并删除） | — |
-
----
-
-## 账户与凭据
-
-「MC设置 → 账户」支持三种类型，**新建/编辑各是独立界面**：
-
-| 类型 | 登录方式 | 说明 |
-| --- | --- | --- |
-| **离线** | 无 | 名字即身份；可自定义 UUID（留空按 `OfflinePlayer:<名字>` 派生） |
-| **第三方（皮肤站）** | Yggdrasil 外置登录 | 先填认证服务器（已缓存的服务器是**可点选、可 × 删除**的标签），再填账号密码；**服务器名字**留空就用域名 |
-| Mojang 官方（微软账号） | —— | **未实现** |
-
-列表每行是**类型气泡 + 游戏 ID**（皮肤站账户登录成功后回写的档案名），下面一行小灰字是
-**`你输入的账号（服务器名）`** —— 输入的是邮箱、游戏里叫角色名，两者不一样时都看得见。
-
-🔒 **边界**：密码/token 只写进宿主凭据服务（`$DSH_HOME/.credentials.yaml`，目录 owner-only）；
-密码和 token 不会出现在工具返回值、HTTP 响应或模型上下文里；凭据服务不可用时不会降级写明文。
-
----
-
-## 工具（32 个，四层命名空间）
-
-| 层 | 数量 | 工具 |
-| --- | --- | --- |
-| **游戏内** `mc_*` | 26 | `mc_status` `mc_ping` `mc_connect` `mc_lan` `mc_accounts` `mc_capabilities` `mc_disconnect` `mc_stop` `mc_config` `mc_context` `mc_players` `mc_say` `mc_events` `mc_watch` `mc_map` `mc_height` `mc_scan` `mc_entities` `mc_inventory` `mc_move` `mc_act` `mc_dig` `mc_build` `mc_give` `mc_sequence` `mc_command` |
-| **游戏外辅助** `mc_kit_*` | 3 | `mc_kit_memory`（记忆树：按服/主题定位、`key` 覆盖、搜索、删除、把文件与图片**存进记忆**）· `mc_kit_image`（SVG→PNG / 引图 / 拼网格）· `mc_kit_express`（把发布区里的文件按「文件分享」模式换成路径 / URL / 一句提示） |
-| **管理** `mc_admin_*` | 1 | `mc_admin_config`（读写全局配置；**MC 模式看不见、也调不动**；普通模式与 **MC+模式** 可见可用） |
-| **调试** `mc_debug_*` | 2 | `mc_debug_sessions`（列活跃会话实例）· `mc_debug_diag`（诊断快照 + 提示词注入状态）。**需在「MC设置 → 调试」开启「开放助手调试工具」后**，才在 MC/MC+ 模式暴露 |
-
-几个设计点：
-
-- `mc_give` 走**协议级** `set_creative_slot`（创造模式即可，**不需要 OP**）；
-- `mc_sequence` 给"连串动作"（最多 64 步），比让模型写脚本稳；
-- `mc_command` 是**最后手段**（要 OP，且受白名单限制）；
-- `mc_map` 的 `format:"image"` 会渲染一张真地形图：作为**图片附件**回给模型，同时落盘到 `.whale-craft/.out/`；
-- `mc_lan` 找**局域网房间**：只做原版那一件事 —— 听 `224.0.2.60:4445` 上"对局域网开放"的公告
-  （`[MOTD]…[/MOTD][AD]端口[/AD]`，重发周期 1.5 秒），听到就拿到 host/端口/MOTD。🔴 **不扫端口**，
-  所以恒定在 `seconds` 秒内返回（默认 3、上限 15）；多播被挡的网络里看不见，直接问对方地址；
-- `mc_ping` 是**已知地址**时的探路工具：发一次 STATUS ping（握手 + 状态请求），拿
-  **通不通 / 版本 / 协议号 / MOTD / 人数 / 延迟**——🔴 **不登录、不用账户、不进服**，拿到就断；
-  超时自己兜（默认 5 秒、上限 30 秒），连不上时把原因说成人话
-  （`ECONNREFUSED`=端口没人听 · `ENOTFOUND`=域名拼错 · 超时=防火墙或服务端 `enable-status=false`）。
-  与 `mc_lan` 正好互补：**不知道地址**听公告，**知道地址**用它探一次，再用 `mc_connect` 真进服；
-- `mc_events` 与看门狗**分工明确**：**"该不该醒"由看门狗判断**（有人叫它 / 受击 / 死亡 / 断线…会主动唤醒），
-  **"发生过什么"由 `mc_events` 提供**（聊天、系统消息、受伤、上线/死亡/重连/断线；⚠️ 被传送 / 捡物 /
-  其他玩家上下线只在看门狗留档里，用 `mc_watch {action:"log"}` 看）。
-  `waitSec` 只是兜底：**看门狗要唤醒时会打断这个等待**（返回 `interrupted:true`），
-  否则一次长等待会把唤醒文案压到等待结束才投递；
-- **断线会主动播报**：掉线会通知 AI（并进事件队列），自动重连期间顶部状态条显示**「重连中…」**、
-  `mc_status` 回 `reconnecting`，重连成功也会说一声——**不会出现"断了却还显示在游戏中"**；
-- 记忆是**语义层**不是文件别名：`topic`/`server` 自动定位路径、`append` 带 `key` 覆盖同 key 那条、
-  跨文件 `search`、删除、把任意文件（含图片）`put` 进记忆再当**图片附件**读回来。
+别忘了重启DSH。
 
 ---
 
@@ -182,118 +84,29 @@ dsh plugin --profile web add link:/path/to/whale-craft
 
 > 不止是权限隔离，有限的工具暴露可以让 AI 更专注于 MC 交互。
 
-两个模式（preset 由插件随包声明，见下一节）：
-
-| | **MC模式**（`minecraft`） | **MC+模式**（`minecraft-plus`） |
+| | MC模式 |	MC+模式 |
 | --- | --- | --- |
-| 工具面 | 只给 `mc_*`（admin 除外）/ `mc_kit_*` + 文件工具（`read`/`write`/`edit`/`glob`/`grep`/`read_image`）+ `present` + `mcMode.allowOtherTools`；宿主的 `pwsh` / `subagent` / `workflow` / `serve_*` **一个都看不见** | **标准模式的全部工具** + mc/mckit 全量（`mc_admin_*` 也可见） |
-| 文件工具边界 | 由 `guard` 硬限在 `<工作区>/.whale-craft/` 内（**不给路径**也算越界；`.dsh` 凭据、`secrets/` 另有硬拒） | 可在**整个会话工作区**使用（受保护文件按宿主默认；凭据路径仍然硬拒） |
-| 提示词 | RULES.md / 版本提示 / 记忆索引（见下一节） | 同上 |
-| 看门狗 / 长期记忆 / 「MC设置」 | ✓ | ✓ |
+| 工具面 | 只提供与MC游戏有关的工具，以及其他必要的工具 |	额外提供标准模式下的所有工具，如运行命令 |
+| 文件工具边界	| 只允许操作工作区下.whale-craft 子目录内的文件 |	允许操作工作区所有文件，权限放开后允许操作所有文件 |
+| 提示词注入	| RULES.md / 版本提示 / 记忆索引，可选注入工作区 AGENTS.md	| 同上，此外固定注入工作区 AGENTS.md |
+| 看门狗 / 长期记忆 / MC设置 |	✓ |	✓ |
 
-**除这两个模式外，其他模式（standard / minimal / …）不再暴露 `mc_*` / `mc_kit_*`**：
-可见面摘掉（`tools.restrict({deny})`）+ `guard` 硬拒双保险。`mc_admin_config` 是例外 ——
-它的用途就是在普通会话里管理插件，普通模式与 MC+模式 都可见可用，只有 MC模式 看不见也调不动。
+除这两个模式外，其他模式不再暴露  MC 游玩相关工具，MC 管理工具除外。
 
-> 系统提示词 = preset 自己的 persona（**宿主按 preset 自动注入，插件不插手**）。
+## 落盘位置
 
----
 
-## 提示词是怎么进去的
+| 东西               | 位置                                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------------------- |
+| 全局配置           | `$DSH_HOME/whale_craft/config.json`                                                                           |
+| 账户元数据         | `$DSH_HOME/whale_craft/accounts.json`                                                                         |
+| 插件日志           | `$DSH_HOME/whale_craft/logs/whale-craft.log`（可用 `MC_LOG` 覆盖）                                            |
+| 会话锁（连服期间） | `$DSH_HOME/whale_craft/.instance.<会话>.json`                                                                 |
+| 记忆 / 提示词      | **`<会话工作区>/.whale-craft/`**：`README.md`（AI 维护的总索引）+ `RULES.md`（行事准则）+ 任意文档/图片等文件 |
+| 按工作区的配置     | `<会话工作区>/.whale-craft/config.json`（提示词三个开关 + 版本标记；对 MC模式 AI **只读**，MC+ 按宿主默认）   |
+| 分享               | `<会话工作区>/.whale-craft/.express/`                                                                         |
 
-本插件**不往系统提示词里塞任何东西**（那样既冗余、又会被 preset 的 persona 压制）。
-注入只有一条通道 —— 学 DSH 原生注入 `AGENTS.md` 的做法，把内容当**插件提示行**投进会话：
-
-| 顺序 | 内容 | 开关 |
-| --- | --- | --- |
-| 1 | 工作区根上的 `AGENTS.md`（DSH 原生那份文件） | `injectWorkspaceAgentsMd`（默认**关**） |
-| 2 | `.whale-craft/RULES.md`：本模式的行事准则（称呼 / 记忆 / 看门狗 / 登服 / 聊天 / 硬规矩） | `injectWhaleCraftAgentsMd`（默认**开**） |
-| 3 | **版本硬提示词**：硬编码、随插件版本发布，说明"本版本哪些工具还不成熟、优先用什么、怎么把文件给用户看" | 无开关（版本的一部分） |
-| 4 | 记忆总索引：`.whale-craft/README.md` 的正文 + 一份**自动目录树** | 无开关 |
-
-- 每条都写明**出自哪个文件**（首行 `Instructions from: …`），在对话里是可折叠的一行提示；
-- **为什么行事准则叫 `RULES.md` 而不是 `AGENTS.md`**：DSH 会把 `AGENTS.md` / `CLAUDE.md` 当"工作区指令"自动注入
-  —— 任何会话只要读过/写过 `.whale-craft/` 下的文件，宿主就会把那份注入**该会话**（包括非 MC 会话），
-  而且不受本插件的开关控制。改成不在候选名单里的名字，注入就只剩我们这一条、且只对 MC 模式生效。
-  老工作区里若已有 `.whale-craft/AGENTS.md`，插件会**自动搬进 `RULES.md`** 并把老文件改名备份
-  （`AGENTS.md.bak-<时间>`）。
-- 行事准则**只有你能改**：AI 对它**只读**（能看不能改，工具与记忆工具两条路一致），要改就在「MC设置 → 提示词」里编辑，
-  那里也能一键**恢复默认**。（工作区 `config.json` 同样只读 —— 与 RULES.md、`AGENTS.md` 一套保护。）
-- **「随版本更新」（默认开）**：插件升级后，用新版本的默认准则**替换**当前内容（**会覆盖你的修改**）；
-  当前版本记录在工作区 `config.json` 的 `rulesVersion` 字段里（老工作区单独的 `.rules-version` 标记会自动迁移进去并删除）。
-  想长期维持自己那份就把它**关掉** —— 关掉后插件永不动它，且关着期间不会"攒着"：以后再打开也不会突然覆盖。
-
----
-
-## 把文件给用户看（发布区 + 「文件分享」开关）
-
-> 让 AI「画了图给你看」这件事，插件自带一条最小通道：**目录即白名单**，不依赖任何外部图床/文件服务。
-> 分享方式由你在「MC设置 → 文件分享」里选（默认**关闭**）。
-
-| 目录 | 谁能拿到 | 用途 |
-| --- | --- | --- |
-| `<工作区>/.whale-craft/.out/` | **谁都拿不到** | 默认输出（草稿、中间产物） |
-| `<工作区>/.whale-craft/.express/` | 取决于文件分享开关 | 发布区：要给你看的图/文件（**支持子目录**） |
-
-文件分享是**「文件分享」页上的一个开关**（`expressEnabled`）：
-
-| 开关 | `mc_kit_express` 返回什么 | 那条访问服务 |
-| --- | --- | --- |
-| **关（默认）** | 恒回一句「文件分享已关闭，请告知用户文件绝对路径，让用户自行打开」——AI 把文件的**绝对路径**给你，你自己打开 | **不开**（访问即 404） |
-| **开** | `base` + `/api/whale-craft/express/<工作区 uuid>/<相对路径>` 的**完整 URL**（图片能直接在对话里内联显示） | **只在开启时**开 |
-
-**开启分享后**要填 `base` = 你访问这台 DSH 用的地址（如 `https://dsh.example.com`，可带路径前缀）；
-设置页有「获取当前」，也可以直接打开开关 —— base 为空时会**自动**用当前访问地址填上。
-（精度：浏览器把**自己正在用的** `location.origin` 报给服务端 → 否则看 `Origin` 头 → 同源 `Referer`
-→ `X-Forwarded-Proto` + `Host` → `Host`。注意 `location.origin` **不含路径**，所以反代额外加的
-路径前缀得你自己补 —— DSH 本身没有"挂载前缀"概念。）
-
-**开与不开都只认发布区**：文件得先放进 `.express/` 或其子目录（出图时把 `out` 写成那里，
-或用 `mc_kit_memory {action:"put"}` 复制过去），再让 AI 调 `mc_kit_express` 取那一行。
-
-- 服务端地址：`GET|HEAD /api/whale-craft/express/<工作区 uuid>/<剩余路径>`（自己的顶层前缀路由，
-  自带同一道信任栅栏）。**uuid 是 DSH 工作区注册表里那个稳定 id** —— 不同父目录下的同名工作区不会撞，
-  目录改名链接也不失效；查不到对应工作区就 404（不退回目录名）。
-- 安全：**只用纯文件名逐段拼接**（`..`、`.`、空段、段内分隔符、盘符、`~` 一律拒），拼完再 `realpath` 复查
-  "真实路径仍在发布区里" ⇒ **路径穿越与符号链接都出不去**；不列目录；单文件上限 32 MB；
-  所有扩展名放行，只给 svg/html 这类"被当文档打开会执行脚本"的加一个 `Content-Security-Policy: sandbox` 头。
-- 设置页还有 **「清除分享数据」**：**与模式无关、随时可点**（二次确认后删掉当前工作区 `.express/` 里的
-  所有文件，目录本身重建）。
-- ⚠️ 前端渲染只认**绝对 http(s)** 图片地址 ⇒ 只有**在线**模式的 URL 能内联显示；关闭模式本来就是"给你路径自己开"。
-
----
-
-## 「MC模式」/「MC+模式」两个 preset 从哪来
-
-DSH 0.2.0-rc.2 起 preset 是**声明式**的：一条 `@deepseek-ai/dsh-agent-preset` 插件行 = 一个模式。
-本插件随包（`package.json → dsh.bundle.patch` 数组）带两个声明文件，装好即出现：
-
-- `presets/minecraft.patch.yml` → 「**MC模式**」：persona（MC 人设定稿那句）+ 文件工具 + job controller
-  （看门狗要挂 job）+ `present`（显式文件交付）+ 压缩组。**不含**任何标准工具 —— 工具面由运行时白名单
-  再收一道（见上一节）。
-- `presets/minecraft-plus.patch.yml` → 「**MC+模式**」：官方 standard 模式的**全表**（persona 换成 MC 的），
-  标准模式有什么工具，它就有什么（另外照常带 MC / mc_kit 工具）。
-
-想自定义组成：用会话里的 **Web 编辑器**（改动按行 id `preset-minecraft` / `preset-minecraft-plus`
-存进 profile 的补丁层，不跟插件抢文件）；卸载插件，这两个模式随之消失。
-
-> **旧宿主遗留**：目录式 preset（`agentPresets.copy` 那代）上仍走 `ensureMcPreset` 自动建
-> `~/.dsh/.agent-presets/minecraft` 那套逻辑；它在 0.2.0-rc.2+ 的新宿主上是 no-op。
-
----
-
-## 安全边界
-
-- **HTTP 接口**（`/api/mc/*`：状态、强制停止、账户、配置、提示词、发布区文件）有**信任栅栏**：
-  非回环且不在 `webRuntime.trustedHosts` 的 Host 一律 403；`Sec-Fetch-Site: cross-site` 403；外来 Origin 403。
-- **AI 拿不到密码**（见上）。
-- **AI 不能改行事准则**，也不能用文件工具或记忆工具读写它。
-- **`mc_command`** 默认只放行一份白名单，且需要 OP；`allowAllCommands` 才全放开（自己负责）。
-- **归档保护**：归档一个正在玩 MC 的会话时，先踢下线 + 关看门狗 + 清后台任务，再放行归档。
-  它接替了宿主的一个内部方法（不是公开扩展点），DSH 升级后可能需要跟着调整。
-- **不碰别人的建筑**：这是给 Agent 的准则，不是技术限制 —— 请在自己的服 / 授权范围内玩。
-
----
+> 记忆是**按会话工作区**的，与插件装在哪、DSH 装在哪都无关。
 
 ## 开发与自检
 
@@ -326,9 +139,9 @@ CI 跑的就是这两条（`.github/workflows/ci.yml`）：**ubuntu（Node 22 / 
   名字必须是 `NPM_TOKEN`，值是 npm 的 Automation token。
 - 也可以**在本机手动发**（不依赖任何 secret）：`npm login` 后跑 `npm run publish:npm`
   —— 前置校验、失败即停、默认要确认，细则见 `agent-docs/release.md`。
-- **每个版本改了什么**见 [`CHANGELOG.md`](CHANGELOG.md)（`0.1.7`：修 1.21/1.21.1 进服掉线、
-  断线状态不同步、`mc_events` 的等待堵住唤醒；`0.1.6`：修皮肤站登录 400；`0.1.5`：修"连不存在的服
-  把整个 DSH 搞崩"、`mc_lan` 只留局域网公告、新增 `mc_ping`、默认行事准则第五版）。
+- **每个版本改了什么**见 [`CHANGELOG.md`](CHANGELOG.md)（`0.2.0-beta.1`：修新 DSH 上装不上 / 跑不起来、
+  新增 MC+模式、连接类工具收口；`0.1.7`：修 1.21/1.21.1 进服掉线、断线状态不同步、`mc_events` 等待堵住唤醒；
+  `0.1.6`：修皮肤站登录 400；`0.1.5`：修"连不存在的服把整个 DSH 搞崩"、`mc_lan` 只留局域网公告、新增 `mc_ping`）。
 
 ---
 
@@ -351,7 +164,7 @@ CI 跑的就是这两条（`.github/workflows/ci.yml`）：**ubuntu（Node 22 / 
 本项目代码由 AI 生成，可能存在未知风险，请谨慎使用。
 
 - 工具：DeepSeek Harness
-- 模型：DeepSeek V4 Flash
+- 模型：DeepSeek V4.1 Flash
 
 ## 许可
 
@@ -361,86 +174,194 @@ MIT（见 `LICENSE`）。第三方组件与许可见 `THIRD_PARTY_NOTICES.md`。
 
 ## English
 
-**[↑ 中文版](#whale-craft)**
+**[↑ 中文版](#whale-craft--鲸鱼工艺)**
 
-**Whale Craft** is a native DSH (DeepSeek Harness) plugin that runs a headless Minecraft bot
-(mineflayer) inside the harness process, so an agent can actually *play*: walk, mine, build, chat,
-read the world and keep notes — and wake itself up when something worth noticing happens.
+**Let DSH play MC** — a native DSH (DeepSeek Harness) plugin that runs a headless Minecraft bot
+(mineflayer) inside the DSH process, joins a Minecraft server, and interacts with the world and
+players through tool calls to build, survive and finish tasks.
 
-- **One bot per conversation** — different chats can play on different servers with different accounts.
-- **It can see** — exact ASCII terrain maps (cheap in tokens) *and* real rendered images.
-- **A single-channel watchdog** — events reach the model through one tool (`mc_watch`) only: it wakes
-  the agent when idle and injects a note mid-generation when busy. It never fakes a user message.
-  Player chat is recognised whether the server sends it signed, unsigned, or in the system slot.
-  A blocking `mc_events {waitSec}` wait is **interrupted** when the watchdog wants to wake the agent,
-  so a long wait can never delay a wake-up.
-- **Honest connection state** — a dropped connection is announced (to the agent and to the UI: the
-  status chip shows *reconnecting…*), and the watcher disarms when there is nothing left to watch.
-  No more "in game" while the socket is already dead.
-- **Long-term memory** — a plain document tree under `<workspace>/.whale-craft/`, indexed by the agent
-  and injected as a plugin notice when the session starts.
-- **A per-release built-in prompt** — a hard-coded, non-editable note that ships with each version
-  ("which tools are still immature, how to hand files to the user").
-- **File sharing switch** — per-workspace publish area (`.whale-craft/.express/`, "the directory *is* the
-  allow-list"), two modes: **off** (default — the agent just hands you an absolute path) or **online**
-  (the agent hands back a full URL built from your `base`, and images render inline in the chat).
-  The HTTP route that serves those files exists **only** in online mode.
-- **Passwords never reach the model** — credentials live in the host credential store; accounts are
-  managed from the in-app **MC Settings** dialog.
-- **Offline regression suite** — 726 assertions, no Minecraft server required.
+- 🎮 **One bot per conversation** — different chats can play on different servers with different accounts, independently.
+- 👀 **It sees the world** — terrain and height maps, plus block/entity exploration tools, help the agent understand the world.
+- 🔔 **One agent + a watchdog** — a single main agent is the "brain"; the watchdog receives events and logs messages, waking and interrupting the agent at the right moment so it reacts to what happens, e.g. a player calling it.
+- 🧠 **Long-term memory** — a document tree under `<workspace>/.whale-craft/`, kept up to date by the agent, so work and adventures continue across sessions.
+- 🖥️ **Friendly UI** — a game status chip, a stop button, MC Settings, and one-click "Connect to MC".
+- 🔒 **Account safety** — offline and third-party (Yggdrasil) accounts. Credentials live in the host config and are never handed to the model directly, via a credential-manager-style flow.
+- 📢 **Tuned prompts** — built-in prompts teach the agent how to interact with the world and how to keep memory, and give advice that guides good builds. Some prompts are freely editable.
 
-### Install
+> ⚠️ **Preview release `0.2.0-beta.1`**
+>
+> For DSH **0.2.0-rc.2 and above**. Not all 0.2.0 features are finished; this release ships what is
+> done, plus support for DSH 0.2.0-rc.2 and DSH Desktop. **A preview may have unknown issues — please
+> report them if you hit any.**
+>
+> ⚠️ **Breaking changes from 0.1**
+>
+> 1. The plugin now requires DSH 0.2.0-rc.2 or newer; older versions are no longer supported.
+>    *Fix: upgrade DSH to 0.2.0-rc.2 or above.*
+> 2. Outside MC and MC+ mode, other modes can no longer call MC game tools. *Fix: move the session
+>    that needs them to MC+ mode — find the last assistant reply and click the "box"-icon "Create MC+
+>    branch" button.*
+> 3. The earlier temporary support for Minecraft 26.2 has been removed. *Fix: wait for a later
+>    release; we will follow up once MineFlayer supports Minecraft 26.2.*
 
-The easy way: tell your agent *"install the plugin from https://github.com/yzi1b/whale-craft"*.
+---
 
-Or manually:
+## Getting started
+
+1. Start a new conversation, pick or create a workspace, and choose **MC mode**.
+2. Click **Connect to MC**, pick a game account, enter the server address and click **Connect** — or
+   connect to a LAN server.
+3. Give orders in the chat, or talk to the bot directly in game.
+
+---
+
+## Requirements
+
+
+| Item     | Requirement                                                                                  |
+| -------- | -------------------------------------------------------------------------------------------- |
+| DSH      | version `>=0.2.0-rc.2 <0.3.0`                                                                |
+| Node     | ≥ 22 (same as DSH)                                                                           |
+| Optional | npm `sharp` (SVG→PNG rasteriser) for `mc_kit_image` rendering; nothing else is affected      |
+
+---
+
+## Install
+
+> ⚠️ **A restart is required**
+>
+> However you install the plugin, fully restart the DSH instance afterwards so every feature works.
+
+Tell your agent: *"install the plugin `npm:whale_craft@^0.2.0-beta.1`"*
+
+### DSH plugin manager
+
+Open **Plugins** from the DSH main UI, click **Add plugin**, enter `whale_craft@^0.2.0-beta.1`, and
+install.
+
+### Manual install
+
+The GitHub repo is https://github.com/yzi1b/whale-craft ; the npm package name is `whale_craft`.
+For historical reasons the npm name uses an underscore — note that the repo name and the package name
+differ, so you do not install the wrong thing.
+
+> The profile below is `web`. DSH Desktop's profile is `desktop`; a custom profile is different.
+
+Install from the GitHub repo:
 
 ```bash
-# from GitHub (or npm, once published — package name is whale_craft)
 dsh plugin --profile web add github:yzi1b/whale-craft
-dsh plugin --profile web add whale_craft
-
-# or from a local checkout
-dsh plugin --profile web add link:/path/to/whale-craft
-
-# then restart DSH (host plugins are not hot-reloaded; the browser bundle is)
 ```
 
-This installs the package and appends `whale_craft` to `dsh.profile.bundles`.
-`mineflayer` ships as a regular dependency — **you do not need to install it yourself**.
-
-The host packages (`@deepseek-ai/dsh-tools` / `@deepseek-ai/schemastery`) are **optional**: when the host
-provides them they are reused as-is; when it cannot (e.g. the stock dsh-desktop, where they live inside
-`app.asar`), the plugin falls back to bundled equivalents. It loads either way — nothing extra to install.
-
-### Use
-
-1. Start a new conversation and pick the **MC mode** preset (game-only), or **MC+ mode** (adds all
-   standard-mode tools on top of the MC toolset).
-2. **Pick or create a workspace** — memory and the prompt live in its `.whale-craft/`.
-3. Optionally set the player name in **MC Settings**, or sign in with a third-party (Yggdrasil) account.
-4. Tell your agent which server to join.
-5. Give orders in the chat, or talk to the bot directly in game.
-
-### Where things live
-
-| What | Where |
-| --- | --- |
-| Config · accounts · logs · lock | `$DSH_HOME/whale_craft/` |
-| Memory · prompt · output · published files | `<workspace>/.whale-craft/` (`README.md` · `RULES.md` · `.out/` · `.express/`) |
-| Per-workspace settings | `<workspace>/.whale-craft/config.json` (prompt toggles + version marker; **read-only** to the MC-mode agent) |
-
-Passwords and tokens go to the host credential store only — they never show up in tool output,
-HTTP responses, or the model context.
-
-### Verify offline
+Install from npm:
 
 ```bash
-node tools/check-core.mjs && node selfcheck.mjs   # 686 assertions, no MC server needed
+dsh plugin --profile web add whale_craft@^0.2.0-beta.1
 ```
 
-CI runs exactly this on Linux (Node 22 and 24) and Windows (Node 22), and packs the tarball on every push.
-Push a `v*` tag to get a GitHub Release with the zip, plus an **npm publish** when the repository has an
-`NPM_TOKEN` secret (without it, the npm step is skipped with a notice — the workflow still succeeds).
+Don't forget to restart DSH.
 
-MIT licensed. Third-party notices in `THIRD_PARTY_NOTICES.md`.
+---
+
+## MC mode / MC+ mode and permission isolation
+
+> Beyond isolation, a limited toolset also keeps the agent focused on MC interaction.
+
+| | MC mode | MC+ mode |
+| --- | --- | --- |
+| Toolset | Only MC-game tools, plus other necessary tools | Additionally exposes all standard-mode tools, e.g. running commands |
+| File tool boundary | Only files under the workspace's `.whale-craft/` | All files in the workspace (all files once permissions are relaxed) |
+| Prompt injection | RULES.md / version note / memory index; workspace `AGENTS.md` optional | The same, plus workspace `AGENTS.md` always injected |
+| Watchdog / long-term memory / MC Settings | ✓ | ✓ |
+
+Outside these two modes, other modes no longer expose MC-play tools (MC admin tools excepted).
+
+## Where things live
+
+
+| What               | Where                                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------- |
+| Global config      | `$DSH_HOME/whale_craft/config.json`                                                                           |
+| Account metadata   | `$DSH_HOME/whale_craft/accounts.json`                                                                         |
+| Plugin log         | `$DSH_HOME/whale_craft/logs/whale-craft.log` (override with `MC_LOG`)                                         |
+| Session lock (while connected) | `$DSH_HOME/whale_craft/.instance.<session>.json`                                                   |
+| Memory / prompts   | **`<workspace>/.whale-craft/`**: `README.md` (the agent's index) + `RULES.md` (conduct) + any docs/images     |
+| Per-workspace settings | `<workspace>/.whale-craft/config.json` (prompt toggles + version marker; **read-only** to the MC-mode agent, host default in MC+) |
+| Sharing            | `<workspace>/.whale-craft/.express/`                                                                          |
+
+> Memory is **per workspace** — independent of where the plugin or DSH is installed.
+
+## Development and self-check
+
+```bash
+node tools/check-core.mjs     # whole-tree syntax + dynamic import + private-field consistency
+node selfcheck.mjs            # 726 offline assertions (fake ctx; no MC server, no network)
+node tools/check-standalone-import.mjs   # clean-env regression: pack → install → import must succeed (slow; CI)
+# run an isolated DSH instance to check whole-tree loading (needs a DSH checkout):
+DSH_ROOT=/path/to/deepseek-harness node tools/isolate.mjs start
+```
+
+`selfcheck.mjs` covers: the tool surface and parameters, per-session instance isolation,
+timeouts/interruption, placement rules (checked against the real `minecraft-data` table), watchdog
+wake-up delivery and job settlement, recognition of unsigned / system-slot chat, memory-tree
+read/write and path-traversal protection, **the publish area's traversal defences and real route**,
+**the two file-sharing modes and `base` derivation** (including the reverse-proxy `Referer` case),
+the account store and credential isolation, config validation, prompt-injection de-duplication and
+version notes, preset self-check and rebuild, **the four-step stop sequence**, the dependency surface
+(including runtime assertions like "`vec3` and `mineflayer` must be the same copy"), and a static
+check of the client bundle.
+
+CI runs exactly these two (`.github/workflows/ci.yml`): **ubuntu (Node 22 / 24) + windows (Node 22)**;
+a separate "package" job runs `npm pack` and checks the tarball has the files it should and no
+`node_modules` / logs / accounts, then runs the clean-env regression (pack → install in a separate
+directory → `import('whale_craft')` must succeed — a local link install can never catch "host packages
+not resolvable"; only a clean install reproduces the user's environment, see issue #5).
+
+Releases go through a tag (`.github/workflows/release.yml`): `git tag v0.1.7 && git push origin v0.1.7`
+→ run the two checks above + verify the tag matches the `package.json` version, then `npm pack` and
+attach the zip to the GitHub Release (the body is taken from that version's section in `CHANGELOG.md`),
+and finally publish to npm (using the repo secret `NPM_TOKEN`). `npm publish` also runs the two checks
+first (`prepublishOnly`) — **a broken tree cannot be published**.
+
+- 🔴 The npm step "checks before publishing": it only publishes when the repo has `NPM_TOKEN`; **if not,
+  it skips explicitly** (Release only, the workflow still goes green). Add the secret at
+  **Settings → Secrets and variables → Actions → New repository secret**, name `NPM_TOKEN`, value an
+  npm Automation token.
+- You can also **publish from your own machine** (no secret needed): `npm login`, then
+  `npm run publish:npm` — pre-flight checks, stops on failure, asks for confirmation by default;
+  details in `agent-docs/release.md`.
+- **What changed in each version** — see [`CHANGELOG.md`](CHANGELOG.md) (`0.2.0-beta.1`: fixes so it
+  installs / runs on the new DSH, new MC+ mode, connection tools consolidated; `0.1.7`: 1.21/1.21.1
+  disconnect, connection state out of sync, `mc_events` wait blocking wake-ups; `0.1.6`: skin-site login
+  400; `0.1.5`: crash on a non-existent server, `mc_lan` kept to LAN announcements, new `mc_ping`).
+
+---
+
+## Known limitations
+
+- **Microsoft (Mojang) login is not implemented** (offline / Yggdrasil only).
+- **File sharing is off by default** (`expressEnabled: false`): the agent only gives you an **absolute
+  path**; to render inline in the chat, turn on the switch under **MC Settings → File sharing** and set
+  `base`. The frontend only accepts absolute http(s) image URLs, so a local path is **not** inlined
+  (by design, not a bug).
+- File sharing's `base` has **no connectivity check**: only you can notice a typo (the URL the agent
+  gets won't open).
+- 🔴 **Why the conduct file is `RULES.md`**: `AGENTS.md` is picked up by DSH as a workspace instruction
+  file and injected into any session that touched that directory, MC or not — so the name is deliberate.
+- If `memoryDir` points at a shared directory, multiple workspaces **share** one memory and `config.json`
+  (and the per-workspace settings with them).
+- Tool descriptions and docs are currently in **Chinese**.
+- **Which MC versions you can connect to depends on the bundled `mineflayer`**; to connect to a version
+  the official one doesn't support yet, replace that copy in the profile.
+- Archive protection relies on a host-internal method and may need follow-up after a DSH upgrade.
+
+## AI usage
+
+This project's code is generated by AI and may carry unknown risks — use with care.
+
+- Tool: DeepSeek Harness
+- Model: DeepSeek V4.1 Flash
+
+## License
+
+MIT (see `LICENSE`). Third-party components and licences in `THIRD_PARTY_NOTICES.md`.
