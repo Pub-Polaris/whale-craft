@@ -3151,15 +3151,6 @@ export function apply(ctx, rawConfig) {
       title: versionPromptTitle(PLUGIN_VERSION),
       text: versionPromptText(),
     })
-    // ③·5 **MC+ 模式说明**（无开关，仅 MC+ 会话）：MC+ 在 MC 模式基础上多一层"标准工具全量 +
-    //      文件全工作区"的语境，随版本硬编码。MC 模式**不投**这条（preset 指纹换代时会整体重投）。
-    if (isMcPlusAgent(agent)) {
-      items.push({
-        rel: versionPromptSource(PLUGIN_VERSION) + '（MC+ 模式说明）',
-        title: versionPromptTitle(PLUGIN_VERSION) + '｜MC+ 模式说明',
-        text: MC_PLUS_NOTICE_TEXT,
-      })
-    }
     // ④ 记忆总索引（`.whale-craft/README.md`）：**每个 MC 会话都给一次**——这正是"长期记忆"的入口。
     //    内容空（还没记过东西）也照样给：里面写着"怎么记"，第一轮就知道该往哪写。
     {
@@ -3313,7 +3304,6 @@ export function apply(ctx, rawConfig) {
     '.whale-craft/RULES.md',
     '.whale-craft/README.md',
     versionPromptSource(PLUGIN_VERSION),
-    versionPromptSource(PLUGIN_VERSION) + '（MC+ 模式说明）',
   ]
 
   /**
@@ -3372,14 +3362,12 @@ export function apply(ctx, rawConfig) {
         'workspace-agents-md': sent.includes('AGENTS.md'),
         'version-prompt': sent.some((r) => String(r).startsWith('whale_craft@')),
         'memory-index': sent.includes('.whale-craft/README.md'),
-        'mc-plus-note': sent.some((r) => String(r).includes('（MC+ 模式说明）')),
       },
       segments: {
         'agents-md': sent.includes('.whale-craft/RULES.md'),
         'workspace-agents-md': sent.includes('AGENTS.md'),
         'version-prompt': sent.some((r) => String(r).startsWith('whale_craft@')),
         'memory-index': sent.includes('.whale-craft/README.md'),
-        'mc-plus-note': sent.some((r) => String(r).includes('（MC+ 模式说明）')),
       },
       // ⚠️ 这里只留**用户看不出来、又真的影响投递**的原因。
       //    "还没到投递时机 / 开关是关的" 这种**不用提示**（用户 2026-09-18：多余）——
@@ -3469,23 +3457,6 @@ export function apply(ctx, rawConfig) {
    * 系统提示词**由宿主按这个 preset 自动注入**，插件不再自己往 systemPrompt 里塞（用户要求）。
    */
   const MC_PERSONA_TEXT = '你在一台真实的 Minecraft Java 版服务器里扮演一名玩家：你的"身体"是一台无头机器人，能观察世界、移动、挖掘和建造。'
-
-  /**
-   * 「MC+模式」的补充说明（随版本硬编码、无开关；**只投给 MC+ 会话**，见 `reconcileNotices`）。
-   *
-   * MC+ = MC 模式基础上开放**标准模式全部工具**（用户 2026-10-04 定）。规矩（RULES.md）、
-   * 版本提示、记忆索引照常注入；这条只把"这个模式多什么、少什么"讲清楚，免得 AI 以为自己
-   * 还在受限模式里（或反过来乱用 mc 工具）。
-   */
-  const MC_PLUS_NOTICE_TEXT = [
-    '【MC+ 模式】本会话在 MC 模式的基础上，开放了**标准模式的全部工具**：',
-    '',
-    '· 标准工具可用：shell（pwsh/bash）、文件搜索、子代理 / 工作流、计划模式、网络访问、技能等；',
-    '· 文件工具（read / write / edit / glob / grep / read_image）可在**整个工作区**内使用，不受 `.whale-craft/` 限制；',
-    '· `mc_*` / `mc_kit_*` 工具与 MC 模式完全一致：记忆仍写入 `.whale-craft/`，凭据相关路径依旧不可触碰；',
-    '· 行事准则（`.whale-craft/RULES.md`）与看门狗与 MC 模式相同；管理工具 `mc_admin_*` 对本模式可见。',
-    '适合"不局限于游戏内"的任务与定制要求——但游戏内的事，仍然优先用 MC 工具与游戏内交流来办。',
-  ].join('\n')
 
   const expandHome = (p) => {
     const s = String(p ?? '')

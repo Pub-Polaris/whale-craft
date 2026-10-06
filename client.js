@@ -1574,8 +1574,7 @@ select[data-wc-in]{appearance:none;padding-right:22px;
           //    原因可能有一堆 —— 不是 MC 模式 / 开关关了 / 文件不在 —— 与其让人猜，不如显示判据）
           injectStatus
             ? React.createElement('div', { 'data-wc-injectstatus': '' },
-              `本会话注入：${injectStatus.mcPlus ? 'MC+模式' : 'MC模式'} ${mark(injectStatus.mcMode)} ｜ 本提示词 RULES.md ${mark(seg['agents-md'])} ｜ 工作区 AGENTS.md ${mark(seg['workspace-agents-md'])}`
-              + (injectStatus.mcPlus ? ` ｜ MC+ 说明 ${mark(seg['mc-plus-note'])}` : ''),
+              `本会话注入：${injectStatus.mcPlus ? 'MC+模式' : 'MC模式'} ${mark(injectStatus.mcMode)} ｜ 本提示词 RULES.md ${mark(seg['agents-md'])} ｜ 工作区 AGENTS.md ${mark(seg['workspace-agents-md'])}`,
               injectStatus.notes?.length
                 ? React.createElement('div', { 'data-wc-note': '' }, injectStatus.notes.join(' ｜ '))
                 : null,

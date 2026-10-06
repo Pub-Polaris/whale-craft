@@ -2104,14 +2104,13 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     const inboxBefore = mcAgent.inbox.nextStep.length
     fire('agent/session-start', mcAgent)
     console.log(`  ${mcAgent.inbox.nextStep.length === inboxBefore ? '✅' : '❌'} agent/session-start 不再重复入队（投递已不在这个时机）`)
-    // 🔴 2026-10-04：MC+ 会话多投一条「MC+ 模式说明」（4 条）；MC 会话仍是 3 条（preset 指纹不同、互不干扰）
+    // 🔴 2026-10-06：删掉「MC+ 模式说明」——模式差异改由 persona 承载（声明式 preset），
+    //    不再靠一条自造 notice。MC+ 会话与 MC 会话一样只投 3 条。
     const plusStep = await preStepMessages(plusAgent)
     const plusMsgs = plusStep.filter((m) => m?.source?.kind === 'plugin:whale_craft')
-    const plusNoteBody = (plusMsgs[2]?.content ?? []).map((c) => c.text ?? '').join('')
-    console.log(`  ${plusMsgs.length === 4 ? '✅' : '❌'} 🔴 MC+ 会话投 4 条（3 条常规 + MC+ 模式说明；实际 ${plusMsgs.length} 条）`)
-    console.log(`  ${/（MC\+ 模式说明）/.test(plusNoteBody.split('\n')[0] ?? '') ? '✅' : '❌'} MC+ 说明的来源行带（MC+ 模式说明）：${JSON.stringify((plusNoteBody.split('\n')[0] ?? '').slice(0, 58))}…`)
-    console.log(`  ${/标准模式的全部工具/.test(plusNoteBody) && /整个工作区/.test(plusNoteBody) && /mc_kit_/.test(plusNoteBody) ? '✅' : '❌'} MC+ 说明讲清"标准全量 + 文件全工作区 + mc/mckit 不变"`)
-    console.log(`  ${msgs.length === 3 ? '✅' : '❌'} MC 会话仍是 3 条（不投 MC+ 说明）`)
+    console.log(`  ${plusMsgs.length === 3 ? '✅' : '❌'} 🔴 MC+ 会话也只投 3 条（不再有「MC+ 模式说明」；实际 ${plusMsgs.length} 条）`)
+    console.log(`  ${!plusMsgs.some((m) => /（MC\+ 模式说明）/.test(String(m?.source?.summary ?? ''))) ? '✅' : '❌'} 投递里不再出现「MC+ 模式说明」`)
+    console.log(`  ${msgs.length === 3 ? '✅' : '❌'} MC 会话仍是 3 条`)
   }
   // 🔴🔴 用户 2026-09-16 真机投诉："这个 agent 怎么还能用 pwsh！不是只暴露我们指定的工具吗！"
   //    旧实现：allowOtherTools 默认为空 ⇒ 只 deny 了我们的管理工具，宿主那堆工具（pwsh/subagent/…）

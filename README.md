@@ -188,7 +188,7 @@ dsh plugin --profile web add link:/path/to/whale-craft
 | --- | --- | --- |
 | 工具面 | 只给 `mc_*`（admin 除外）/ `mc_kit_*` + 文件工具（`read`/`write`/`edit`/`glob`/`grep`/`read_image`）+ `present` + `mcMode.allowOtherTools`；宿主的 `pwsh` / `subagent` / `workflow` / `serve_*` **一个都看不见** | **标准模式的全部工具** + mc/mckit 全量（`mc_admin_*` 也可见） |
 | 文件工具边界 | 由 `guard` 硬限在 `<工作区>/.whale-craft/` 内（**不给路径**也算越界；`.dsh` 凭据、`secrets/` 另有硬拒） | 可在**整个会话工作区**使用（受保护文件按宿主默认；凭据路径仍然硬拒） |
-| 提示词 | RULES.md / 版本提示 / 记忆索引（见下一节） | 同上，**再加一条 MC+ 模式说明** |
+| 提示词 | RULES.md / 版本提示 / 记忆索引（见下一节） | 同上 |
 | 看门狗 / 长期记忆 / 「MC设置」 | ✓ | ✓ |
 
 **除这两个模式外，其他模式（standard / minimal / …）不再暴露 `mc_*` / `mc_kit_*`**：
