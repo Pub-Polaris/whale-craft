@@ -301,7 +301,7 @@ console.log('\n--- 工具面（share 移除 / present 接入）---')
   console.log(`  ${/行事准则已替换为新版本默认内容/.test(idx) ? '✅' : '❌'} 真替换时会写一行日志（便于排查"我的准则怎么变了"）`)
   console.log(`  ${!/read_image \{file_path/.test(codeOnly) && !/present \{files/.test(codeOnly) ? '✅' : '❌'} 🔴 旧的"用 read_image / present 发图"提示已清干净（注释里的历史说明不算）`)
   const vp = readFileSync(new URL('./src/version-prompt.mjs', import.meta.url), 'utf8')
-  console.log(`  ${/\.whale-craft\/\.express\//.test(vp) && /mc_kit_express/.test(vp) && /!\[图片名\]\(url\)/.test(vp) && /\[文件名\]\(url\)/.test(vp) ? '✅' : '❌'} 版本提示里写清交付流程（先放发布区 → mc_kit_express 拿路径 → 自己拼 ![]/[]）`)
+  console.log(`  ${/mc_move/.test(vp) && /本版本对于生存、冒险能力的支持极弱/.test(vp) ? '✅' : '❌'} 版本提示写本版本的时效性事实（工具成熟度 + 能力短板；不再写交付流程——那归 mc_kit_express 工具说明）`)
   const cli = readFileSync(new URL('./client.js', import.meta.url), 'utf8')
   console.log(`  ${/data-wc-verprompt/.test(cli) && /本版本内置提示/.test(cli) ? '✅' : '❌'} 「提示词」页只读展示版本内置提示（用户有权知道它说了什么）`)
 }
@@ -1442,10 +1442,10 @@ console.log('\n--- 提示词注入通道（插件提示行，不再碰 systemPro
   // ② 记忆索引改走提示行（和两个 AGENTS.md 同一条路）
   console.log(`  ${/rel: '\.whale-craft\/README\.md'/.test(idx) && /提示词注入：\.whale-craft\/README\.md/.test(idx) ? '✅' : '❌'} 记忆索引（.whale-craft/README.md）也当**插件提示行**投递`)
   console.log(`  ${/const noticeLedger = new WeakMap\(\)/.test(idx) && /const reconcileNotices = \(agent\)/.test(idx) ? '✅' : '❌'} 记下**实际投出去**的文件（投递台账 noticeLedger + reconcileNotices；状态页据此报真实投递，不是"打算投"）`)
-  // ③ persona：用户给的**定稿原文**，一字不改
-  const persona = '你在一台真实的 Minecraft Java 版服务器里扮演一名玩家：你的"身体"是一台无头机器人，能观察世界、移动、挖掘和建造。'
+  // ③ persona：MC 模式人设（与 presets/minecraft.patch.yml 的 persona.prefix 逐字一致）
+  const persona = '你是一个 Minecraft Java 版游戏助理，由模型 {{model}} 驱动。你可以通过工具调用，使用无头机器人进入 MC 服务器中与世界和玩家互动。你应当专注于 MC 游戏，不过问交互原理和插件代码，除非收到明确调试指令。'
   const m = idx.match(/const MC_PERSONA_TEXT = '([^']*)'/)
-  console.log(`  ${m?.[1] === persona ? '✅' : '❌'} 🔴 preset persona = 用户定稿的那一句原文${m?.[1] === persona ? '' : `（实际：${JSON.stringify(m?.[1] ?? null)}）`}`)
+  console.log(`  ${m?.[1] === persona ? '✅' : '❌'} 🔴 MC_PERSONA_TEXT 与 MC 模式 preset 的 persona 逐字一致${m?.[1] === persona ? '' : `（实际：${JSON.stringify(m?.[1] ?? null)}）`}`)
   // ④ 每个 MC 会话都会拿到"记忆索引"提示行：这条在下面 ⑦ 用真 agent 验（body 里带记忆工具名）
 }
 
@@ -1567,7 +1567,7 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
   {
     const compFile = presetPaths.get('minecraft')
     const comp = compFile && exTop(compFile) ? rfTop(compFile, 'utf8') : ''
-    console.log(`  ${/Minecraft Java 版服务器里扮演一名玩家/.test(comp) ? '✅' : '❌'} persona 换成我们自己的（Minecraft 玩家）`)
+    console.log(`  ${/Minecraft Java 版游戏助理/.test(comp) ? '✅' : '❌'} persona 换成我们自己的（MC 游戏助理）`)
     console.log(`  ${!/helpful software engineer assistant/.test(comp) ? '✅' : '❌'} 🔴 官方那句"软件助手"已不存在`)
     console.log(`  ${!/complete: true/.test(comp) && !/includeRuntimeContext: false/.test(comp) ? '✅' : '❌'} minimal 的 complete / includeRuntimeContext 已去掉（否则会压掉其它 section）`)
     console.log(`  ${/^-\s+id:\s*persistent-shell[\s\S]{0,120}disabled: true/m.test(comp) ? '✅' : '❌'} 🔴 持久 shell 已关掉（与"本模式没有 shell"的指导一致）`)
@@ -1704,14 +1704,16 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     console.log(`  ${/name: MC模式/.test(mcSrc) && /name: MC\+模式/.test(plusSrc) ? '✅' : '❌'} 显示名 = MC模式 / MC+模式`)
     console.log(`  ${/DSH加入Minecraft Java版服务器，像玩家一样游玩。只提供游玩MC相关工具，Agent更专注和高效。/.test(mcSrc) ? '✅' : '❌'} MC模式简介 = 用户给定原文（逐字）`)
     console.log(`  ${/在MC模式的基础上，提供标准模式全部工具，适合不局限于游戏内的任务和定制要求。/.test(plusSrc) ? '✅' : '❌'} MC+模式简介 = 用户给定原文（逐字）`)
-    const personaOk = /你在一台真实的 Minecraft Java 版服务器里扮演一名玩家：你的"身体"是一台无头机器人，能观察世界、移动、挖掘和建造。/.test(mcSrc)
-      && /你在一台真实的 Minecraft Java 版服务器里扮演一名玩家：你的"身体"是一台无头机器人，能观察世界、移动、挖掘和建造。/.test(plusSrc)
-    console.log(`  ${personaOk ? '✅' : '❌'} 两个 preset 的 persona = 定稿原文（不复制官方那句）`)
+    const MC_PREFIX = '你是一个 Minecraft Java 版游戏助理，由模型 {{model}} 驱动。你可以通过工具调用，使用无头机器人进入 MC 服务器中与世界和玩家互动。你应当专注于 MC 游戏，不过问交互原理和插件代码，除非收到明确调试指令。'
+    const PLUS_PREFIX = '你是一个由 {{model}} 模型驱动的编程 agent。同时 whale_craft 插件赋予你使用无头机器人进入 Minecraft Java 版服务器的能力。你可以调用工具与世界和玩家互动。编程与系统操作相关的工具仍然暴露，用于扩展自身 MC 能力或进行调试研究。'
+    const personaOk = mcSrc.includes(MC_PREFIX) && plusSrc.includes(PLUS_PREFIX)
+    console.log(`  ${personaOk ? '✅' : '❌'} 🔴 两个 preset 的 persona 各自是我们的（MC 游戏助理 / 编程 agent；不复制官方那句）`)
     const mcNeeds = ['@deepseek-ai/dsh-persona', '@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-tool-jobs', '@deepseek-ai/dsh-tool-present', '@deepseek-ai/dsh-compaction-basic']
     console.log(`  ${mcNeeds.every((n) => mcSrc.includes(n)) ? '✅' : '❌'} MC模式组成含 persona/tool-fs/tool-jobs/present/compaction`)
     const plusNeeds = ['@deepseek-ai/dsh-persona', '@deepseek-ai/dsh-agent-instructions', '@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-tool-bash', '@deepseek-ai/dsh-tool-fs-search', '@deepseek-ai/dsh-skill-filesystem', '@deepseek-ai/dsh-plan-mode', '@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-web', '@deepseek-ai/dsh-plugin-manager/tools']
     console.log(`  ${plusNeeds.every((n) => plusSrc.includes(n)) ? '✅' : '❌'} MC+模式组成 = 标准模式全表（persona 除外）：${plusNeeds.filter((n) => !plusSrc.includes(n)).join(', ') || '无缺'}`)
-    console.log(`  ${!mcSrc.includes('@deepseek-ai/dsh-tool-pwsh') && !plusSrc.includes('whale_craft') ? '✅' : '❌'} 🔴 MC模式**不挂**标准工具、preset 里**不挂**插件自己（工具走全局注册 + restrict/guard）`)
+    const mountsSelf = /\bname:\s*whale_craft\b/.test(mcSrc) || /\bname:\s*whale_craft\b/.test(plusSrc)
+    console.log(`  ${!mcSrc.includes('@deepseek-ai/dsh-tool-pwsh') && !mountsSelf ? '✅' : '❌'} 🔴 MC模式**不挂**标准工具、preset 里**不挂**插件自己（工具走全局注册 + restrict/guard；persona 正文里出现 "whale_craft" 不算）`)
     console.log(`  ${pkg.files?.includes('presets') ? '✅' : '❌'} files 里列了 presets/（发布包才带得上声明）`)
   }
   const { mkdtempSync } = await import('node:fs')
@@ -2078,17 +2080,15 @@ console.log('\n--- 全局配置 / mc_admin_config / MC 模式隔离 ---')
     console.log(`  ${msgs.length === 3 && queuedAfterStep1 === 0 ? '✅' : '❌'} 🔴 提示行是**本步改写**送出去的（没有走"塞队列、下一步才领"那条晚一步的老路；队列残留 ${queuedAfterStep1} 条）`)
     console.log(`  ${first?.source?.kind === 'plugin:whale_craft' && first?.source?.plugin === undefined && first?.source?.form === 'notice' ? '✅' : '❌'} 🔴 来源是 plugin:whale_craft/notice（**不是**用户发言；v4 规范形态不带旧 plugin 字段）：${JSON.stringify(first?.source ?? null)}`)
     const body = (first?.content ?? []).map((c) => c.text ?? '').join('')
-    console.log(`  ${/Whale Craft 行事准则/.test(body) && /Minecraft/.test(body) ? '✅' : '❌'} 第 1 条 = 行事准则（${body.length} 字），首行写明文件：${JSON.stringify(body.split('\n')[0])}`)
+    console.log(`  ${/Whale Craft 行事准则/.test(body) && /Master/.test(body) ? '✅' : '❌'} 第 1 条 = 行事准则（${body.length} 字），首行写明文件：${JSON.stringify(body.split('\n')[0])}`)
     console.log(`  ${/^Instructions from: \.whale-craft\/RULES\.md$/.test(body.split('\n')[0] ?? '') ? '✅' : '❌'} 正文首行是 "Instructions from: .whale-craft/RULES.md"（与 DSH 原生同形状）`)
     // 第 2 条 = **版本硬提示词**（硬编码、随版本发布、无开关、排在行事准则之后）
     const bodyV = (second?.content ?? []).map((c) => c.text ?? '').join('')
     console.log(`  ${second?.source?.form === 'notice' && /^Instructions from: whale_craft@/.test(bodyV.split('\n')[0] ?? '') ? '✅' : '❌'} 第 2 条 = 版本提示（来源行 ${JSON.stringify((bodyV.split('\n')[0] ?? '').slice(0, 46))}…）`)
     console.log(`  ${/mc_move/.test(bodyV) && /mc_command/.test(bodyV) && /\/setblock/.test(bodyV) ? '✅' : '❌'} 版本提示正文点了工具名与指令名（mc_move / mc_command / /setblock）`)
     console.log(`  ${/可以先试一次/.test(bodyV) && /被白名单或权限拒绝/.test(bodyV) ? '✅' : '❌'} 第 1 条保留"先试一次、被拒再退"（不然模型有权限也不敢用指令）`)
-    console.log(`  ${/mc_kit_express/.test(bodyV) && /\.whale-craft\/\.express\//.test(bodyV) ? '✅' : '❌'} 第 2 条写明发布区路径与 mc_kit_express`)
-    console.log(`  ${/\[文件名\]\(url\)/.test(bodyV) && !/\[文件名\]\(\)/.test(bodyV) ? '✅' : '❌'} 🔴 链接示例带 url（空括号那个笔误已修）`)
-    console.log(`  ${/原样使用/.test(bodyV) && /不要补/.test(bodyV) ? '✅' : '❌'} 提醒"原样使用、别补域名"（补了在 https 下会被混合内容挡掉）`)
-    console.log(`  ${/关闭/.test(bodyV) && /在线/.test(bodyV) && /文件分享/.test(bodyV) && !/Windows 本地/.test(bodyV) ? '✅' : '❌'} 🔴 第 2 条按「文件分享」两种模式分别交代（关闭/在线；本地那条已删）`)
+    console.log(`  ${/生存、冒险/.test(bodyV) && /明确告知用户/.test(bodyV) ? '✅' : '❌'} 第 2 条讲清本版本能力短板（生存/冒险极弱，先告知用户再尽力）`)
+    console.log(`  ${!/mc_kit_express/.test(bodyV) && !/\.whale-craft\/\.express\//.test(bodyV) ? '✅' : '❌'} 🔴 交付/文件分享流程已移出版本提示（归 mc_kit_express 工具说明）`)
     console.log(`  ${/^1\./m.test(bodyV) && /^2\./m.test(bodyV) && !/^3\./m.test(bodyV) ? '✅' : '❌'} 正文就是两条（用户："别的属实多余了"）`)
     // 选项 A（用户 2026-09-16 定）：**正文里不写版本号** —— 版本由来源行与折叠标题携带
     console.log(`  ${!/v\d+\.\d+\.\d+/.test(bodyV.replace(/^Instructions from: [^\n]*\n+/, '')) ? '✅' : '❌'} 🔴 正文里没有版本号（版本只在来源行与折叠标题里；哈希只标记正文本身）`)
@@ -2610,23 +2610,21 @@ console.log('\n--- 行事准则 RULES.md / 新开关 / 边界信息 ---')
   // 🔴 凭据边界：默认准则**不得**再指路到明文凭据文件、也不得出现已删除的连接参数
   console.log(`  ${!/mc-servers\.md/.test(DEFAULT_AGENTS_MD) ? '✅' : '❌'} 默认准则不再指路 .agent-docs/mc-servers.md（那里曾有明文密码）`)
   console.log(`  ${!/authPass|authUrl|authUser/.test(DEFAULT_AGENTS_MD) ? '✅' : '❌'} 默认准则不含已删除的 mc_connect 凭据参数`)
-  console.log(`  ${/MC设置/.test(DEFAULT_AGENTS_MD) ? '✅' : '❌'} 默认准则教它把用户引导到「MC设置」`)
-  // 🔴 2026-09-18 第五版（用户给的全文）：上一版的「建筑须知」之上，新增「较长思考」整节。
+  console.log(`  ${/重新登录或刷新/.test(DEFAULT_AGENTS_MD) ? '✅' : '❌'} 「进入服务器」在登录失败时引导用户重新登录 / 刷新`)
   {
-    const secs = ['宗旨', '称呼', '记忆', '边界信息', '登录游戏', '看门狗', '聊天', '建筑须知', '较长思考', '硬规矩']
+    const secs = ['宗旨', '称呼', '记忆', '兼容性', '进入服务器', '看门狗', '聊天', '建筑须知', '其他']
     const missing = secs.filter((s) => !DEFAULT_AGENTS_MD.includes(`## ${s}`))
-    console.log(`  ${missing.length === 0 ? '✅' : '❌'} 🔴 第五版的十个分节都在（缺：${missing.join('、') || '无'}）`)
+    console.log(`  ${missing.length === 0 ? '✅' : '❌'} 🔴 九个分节都在（缺：${missing.join('、') || '无'}）`)
+    const steps = ['mc_accounts', 'mc_lan', 'mc_ping', 'mc_connect']
+    const lackSteps = steps.filter((k) => !DEFAULT_AGENTS_MD.includes(k))
+    console.log(`  ${lackSteps.length === 0 ? '✅' : '❌'} 🔴「进入服务器」用到 mc_accounts / mc_lan / mc_ping / mc_connect（缺：${lackSteps.join('、') || '无'}）`)
     const house = ['环境', 'NBT', '楼梯', '复盘', '功能性']
     const lack = house.filter((k) => !DEFAULT_AGENTS_MD.includes(k))
     console.log(`  ${lack.length === 0 ? '✅' : '❌'} 🔴「建筑须知」讲到了关键点（环境协调 / 方块属性与 NBT / 多部分方块 / 细节 / 复盘；缺：${lack.join('、') || '无'}）`)
     const houseNew = ['先将建筑大体结构完成', '每阶段完成要给用户响应', '建造完成后，需要复盘']
     const lack2 = houseNew.filter((k) => !DEFAULT_AGENTS_MD.includes(k))
     console.log(`  ${lack2.length === 0 ? '✅' : '❌'} 🔴「建筑须知」补的三条也在（先大体结构 / 每阶段回话 / 完工复盘；缺：${lack2.join('、') || '无'}）`)
-    console.log(`  ${/第一时间回复/.test(DEFAULT_AGENTS_MD) ? '✅' : '❌'} 「聊天」有"第一时间回复用户"（第四版加的）`)
-    // 第五版新加的整节：长时间思考要偶尔冒个泡（否则用户以为你卡住了，事件提示词也没时机注入）
-    const think = ['较长思考', '简短地给用户汇报', '提示词有时机注入']
-    const lack3 = think.filter((k) => !DEFAULT_AGENTS_MD.includes(k))
-    console.log(`  ${lack3.length === 0 ? '✅' : '❌'} 🔴 新增「较长思考」讲到关键点（长思考要偶尔汇报 / 这样事件提示词才有注入时机；缺：${lack3.join('、') || '无'}）`)
+    console.log(`  ${/第一时间回复/.test(DEFAULT_AGENTS_MD) ? '✅' : '❌'} 「聊天」有"第一时间回复用户"`)
   }
 
   const dir = mkdtempSync(join(tmpdir(), 'whale-md-'))

@@ -29,7 +29,7 @@ export function buildConnectPrompt (ctx) {
   const via = ctx?.via === 'lan' ? 'lan' : 'manual'
   const lines = [
     `Connect to the Minecraft server at ${address} using the account ${account}.`,
-    'Call mc_connect with that address and account, then use mc_events to see what happened.',
+    'Call `mc_connect` with that address and account, then reply to the user.',
   ]
   if (via === 'lan') {
     lines.push('The address points to a server on the local network and may be temporary.')

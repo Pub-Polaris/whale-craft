@@ -2723,13 +2723,10 @@ export function apply(ctx, rawConfig) {
    */
   ctx.tools.register(asTool({
     name: 'mc_kit_express',
-    description: '把**发布区**（`.whale-craft/.express/`）里的文件换成"给用户的东西"。\n'
-      + '· 入参：`path` —— 发布区下的文件（工作区相对或绝对都行，**必须在 `.whale-craft/.express/` 下**）；\n'
-      + '· 返回**一行**，内容取决于用户在「MC设置 → 文件分享」里有没有开启分享：\n'
-      + '  · 关闭（默认）：只回一句"文件分享已关闭…"——那就把文件的**绝对路径**告诉用户，让用户自己打开；\n'
-      + '  · 开启：回**完整 URL**——图片 `![图片名](url)`、其它文件 `[文件名](url)` 嵌进回复里；\n'
-      + '· 链接**原样使用**，不要再补 `http://…` 或域名。\n'
-      + '⚠️ 只有 `.whale-craft/.express/` 下的文件可分享；默认输出目录 `.whale-craft/.out/` **不对外**。',
+    description: '获取分享区中文件的完整分享URL。\n'
+      + '要给用户分享图片或其他文件，先将要分享的文件放在工作区 `.whale-craft/.express/` 下，然后调用本工具传入文件路径，本工具会返回该文件用户可达的**完整**URL。该URL即可用于回报用户，无需再补充协议或域名。\n'
+      + '如果要分享的文件是图片，期望在回复中内嵌展示出来，回复 `![图片名](url)` 即可。其他文件，或期望是可以下载的URL，回复 `[文件名](url)` 即可。\n'
+      + '本工具只用于生成URL。只要用户开启分享功能，`.whale-craft/.express/` 下的文件都会分享出去。如果用户没有开启分享功能，调用本工具会有相应报错。如果用户反映仍然无法看到图片或访问文件，且你的操作并无问题，提醒用户检查文件分享的 base 配置是否正确。',
     parameters: {
       path: { type: 'string', required: true, description: '发布区下的文件路径（工作区相对或绝对；必须在 .whale-craft/.express/ 下）' },
     },
@@ -3446,17 +3443,16 @@ export function apply(ctx, rawConfig) {
 
   /** `~` 开头的 preset 根展开成绝对路径（宿主的 root 配置允许写 `~`） */
   /**
-   * 自动建出来的 preset 的**人设**（persona）。
+   * MC模式 preset 的**人设**（persona 的 `prefix`）。
    *
-   * 🔴 用户给的**定稿原文**（2026-09-16，一个字都不许改）：
-   *    "你在一台真实的 Minecraft Java 版服务器里扮演一名玩家：你的"身体"是一台无头机器人，
-   *     能观察世界、移动、挖掘和建造。"
+   * 🔴 只服务**旧宿主**的目录式自举（`ensureMcPreset` 复制 preset 时把 persona 换成这句）。
+   *    新宿主（0.2.0-rc.2+）的人设由 `presets/minecraft.patch.yml` 的 `persona.config` 声明 ——
+   *    那句才是权威，这里必须逐字对齐（改一处要一起改；可读版见 dev-docs/prompt/mc_mode_persona.md）。
    *
-   * 从前那句 "You are a helpful software engineer assistant." 来自我们复制的官方 `minimal`。
-   * 这里只写**身份 + 能力**；规矩（称呼/记忆/看门狗/指令/边界）全在 `.whale-craft/RULES.md`，不重复。
-   * 系统提示词**由宿主按这个 preset 自动注入**，插件不再自己往 systemPrompt 里塞（用户要求）。
+   * 只写**身份 + 能力**；规矩全在 `.whale-craft/RULES.md`，不重复。
+   * 系统提示词**由宿主按 preset 自动注入**，插件不往 systemPrompt 里塞（用户要求）。
    */
-  const MC_PERSONA_TEXT = '你在一台真实的 Minecraft Java 版服务器里扮演一名玩家：你的"身体"是一台无头机器人，能观察世界、移动、挖掘和建造。'
+  const MC_PERSONA_TEXT = '你是一个 Minecraft Java 版游戏助理，由模型 {{model}} 驱动。你可以通过工具调用，使用无头机器人进入 MC 服务器中与世界和玩家互动。你应当专注于 MC 游戏，不过问交互原理和插件代码，除非收到明确调试指令。'
 
   const expandHome = (p) => {
     const s = String(p ?? '')
