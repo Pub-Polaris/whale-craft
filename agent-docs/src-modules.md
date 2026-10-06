@@ -214,8 +214,17 @@
 - 内置 validator：宿主 `validateJsonSchemaValue` 的子集，违规文案/路径逐字对齐（`"arguments" must be an object` 等）；违规抛 `BuiltinToolArgsError`（name=`ToolArgsError`、code=`INVALID_ARGS`）。⚠️ 它不是宿主 `HarnessError` 子类（拿不到宿主类）——宿主显示层会退化成通用错误，文案保持一致（任务书认可的退化）。
 - 自检：段 A 直接与宿主编译器对拍；段 B 用 `tools/no-host-init.mjs`（module.register 解析钩子）屏蔽两个包，子进程**整树自检** + 29 个工具注册形状**逐字比对**。CI 另有 `tools/check-standalone-import.mjs`（干净安装 import 回归；改回静态 import 必红）。
 
+## 16b. `src/resolver-shim.mjs` —— 宿主解析器兜底（绕过 DSH rc.2 的 bug；2026-10-06）
+
+> **纯副作用模块**（无导出）：`index.js` 的**第一条 import**，必须排在 `./src/core.mjs`（→ mineflayer）之前（ESM 按 import 顺序求值）。事故档案见 [history.md](history.md) F14。
+
+- **症状**：从 npm/registry 安装（**非 link**）的插件一律 `failed to import`、整个不激活；link 调试正常。
+- **根因**：宿主 `dsh-app-boot` 的 `ResolutionRouter.routeScoped` 对 **link 层提前 `routeLinked` 返回**、**非 link 层**才走 `for (const p of createRequire(parent).resolve.paths(name))`；`readable-stream@4` 的 `require('process/')`（尾部斜杠）使 `resolve.paths` 返回 **null** ⇒ `for...of null` 抛 `TypeError`。插件加载 mineflayer（依赖链含 readable-stream）时即炸。
+- **修法**：包一层 `Module._resolveFilename`——先原样调宿主那份；**只在它抛该特定 TypeError 时**兜底（去尾斜杠后是内置名 ⇒ 直接返回；否则退回 `_findPath`）。其余请求行为逐字不变。
+- ⚠️ 对宿主内部的 monkey-patch，属**临时手段**；DSH 修好后删除（history.md §4 待办有记）。
+
 ## 17. 模块依赖与不变式
 
-- 模块间 import：`config.mjs → express.mjs`（`EXPRESS_MODES/normalizeExpressBase/resolveExpressMode`）；`agentsmd.mjs → wsconfig.mjs`（版本读写）；`memory.mjs → protected.mjs`（保护判定）；`tool-def.mjs` 自解析宿主包（可缺省）；index.js 组装其余。
+- 模块间 import：`config.mjs → express.mjs`（`EXPRESS_MODES/normalizeExpressBase/resolveExpressMode`）；`agentsmd.mjs → wsconfig.mjs`（版本读写）；`memory.mjs → protected.mjs`（保护判定）；`tool-def.mjs` 自解析宿主包（可缺省）；index.js 组装其余；`resolver-shim.mjs` 无导出、纯副作用（index.js 首条 import，必须早于其余全部）。
 - 记忆根定位（index.js `memoryRootFor`）：`WHALE_CRAFT_MEMORY_DIR` env → `pluginConfig.memoryDir` → `<会话 cwd>/.whale-craft` → `stateDir/memory` 兜底。
 - 跨模块不变式：① 记忆路径全过 `safePath`，受保护文件（RULES/AGENTS/config.json）**可读不可写**（写类方法拒绝）；② 凭据只进宿主凭据服务，`view()`/工具返回/HTTP 永不见；③ 发布区只服务 `.express/`，`.out/` 永不对外；④ LAN 只被动听；⑤ ping 永不 reject；⑥ 一切写给模型的注入都是"提示行"。

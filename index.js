@@ -22,6 +22,9 @@
  * `@deepseek-ai/dsh-tools`）—— 它们是 **optional peer**（包管理器永远不装），官方 dsh-desktop 上宿主
  * 解析层也喂不进来 ⇒ 模块**链接期**就失败，宿主只报一句 `failed to import`。现在两条路都"拿不到也能活"：
  * `z` 在下面按需动态 import（拿不到就**不导出** Config）；`defineTool` 来自 src/tool-def.mjs（宿主优先 + 内置兜底）。 */
+// 🔴 必须**排在 core.mjs 之前**（ESM 按 import 顺序求值）：此处包一层宿主解析器，兜住 DSH rc.2
+//    「非 link 插件里 readable-stream 的 require('process/') 把 ResolutionRouter 搞崩」的 bug。
+import './src/resolver-shim.mjs'
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, unlinkSync, statSync, renameSync, realpathSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'

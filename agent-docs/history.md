@@ -16,6 +16,7 @@
 | 0.1.6 | 2026-09-19 | 皮肤站登录 400（authenticate 补 Yggdrasil 必填 `agent` 字段） |
 | 0.1.7 | 2026-09-20 | 三修：断线状态不同步（三处撒谎）／`mc_events{waitSec}` 堵唤醒／1.21·1.21.1 进服秒踢（协议护栏）+ 幽灵在线 |
 | main 未发版 | 2026-09 末 / 10-03 | GitHub issue #1 五处修复（工具组探针静默失效等，版本无关）；`tools/dev.mjs` 调试工具链（`chore: 调试工具`）；26.2 按键上报兼容层整体移除（上游尚无 26.2 数据；详见 F10）；DSH 版本范围声明（engines.dsh + dsh peer）；**0.1 时代死配置/死代码清理**（Config 的 7+2 个无人读字段、`jsonSafe`、`connect` 旧字符串签名、`BUILTIN_AUTH_SERVERS` 别名、patch.yml 的 autoConnect 块）；**插件页中英本地化**（鲸鱼工艺 / Whale Craft + 描述；`locale/*.json` 逐文件 exports——模式写法踩过 `en.json.json` 静默坑）；**按工作区 settings→`config.json`**（提示词三开关从全局下放 + `.rules-version` 迁入删除 + 受保护文件统一"可读不可写"）；**「MC+模式」+ MC模式转声明式 preset**；**issue #5「failed to import」**（见 F11）；**v4 会话 `source.kind` / 看门狗 job owner 修复**（见 F12） |
+| 0.2.0-beta.1 | 2026-10-06 | 上表这批未发版大改的首度对外**预览**（MC+/声明式 preset、连接类工具收口、issue #5 修复…）。⚠️ **已知缺陷**：从 npm 安装后 `failed to import`（宿主 resolver bug，见 F14），link 安装不受影响 |
 
 ## 2. 事故档案（按主题）
 
@@ -82,6 +83,7 @@
 | F11 | 官方 dsh-desktop / 干净安装上插件 **`failed to import`**（issue #5，2026-10-04） | `index.js` 顶层**静态** import 两个 optional peer（`@deepseek-ai/dsh-tools`/`schemastery`）——包管理器永不装、desktop 上宿主包在 `app.asar` 里喂不进来 ⇒ 模块**链接期**失败（与 B1 的 dsh-llm 漏依赖同族，这次是"包在宿主里但插件解析不到"）。修法：两个包全部**可缺省**（`src/tool-def.mjs` 宿主优先/内置兜底；Config 拿不到 schemastery 就**不导出**、apply 自己兜默认值）。**本机 link 安装测不出来** ⇒ 新增"无宿主模拟"子进程自检 + CI 干净安装回归（已反证：改回静态 import 必红） |
 | F12 | v4 会话格式下**提示词注入/看门狗唤醒整轮失败** + 看门狗 job 挂不上（PR #2 @swan3146 的真机实验；2026-10-04 核实并修） | ① `source.kind` 写死 V3 包装值 `'plugin'`，**v4 准入点名拒绝**（规范值 `plugin:whale_craft`，宿主 `createUserMessage` 对 source 原样透传不修正）；② jobs 的 `owner`/`caller` 只认**会话 id 字符串**（`resolveOwner()` 拿它查 agents 注册表 `agents.get(session)`、`assertAccess()` 按 `job.owner.id === caller` 比对）——传 agent 对象 ⇒ job 挂不上（静默降级"无 job 模式"）、kill 被判"别人的 job"。两条都拿 desktop 0.2.0-rc.2 的 `app.asar` 逐字核对过（本机会话文件即 `session.v4.jsonl.zstd`）。修法：两处 source 改 v4 规范值；start/kill/list 全改传 `agent.id`，拿不到 id 不挂无主 job |
 | F13 | 部分 DSH 版本上**切不进 MC 模式**：`persona … invalid config: - $text missing required value`（0.1.3） | persona 的"人设正文"字段名**跨 DSH 版本变过**（老版 `text`、新版 `prefix`），而 `ensureMcPreset` 此前写死 `prefix`。修法：键名**跟着该部署自带的源 preset 走**（源用 `text` 就用 `text`），只替换正文值、绝不新增对方 schema 里没有的键；认不出结构就一行都不动并记日志。启动自检对**插件自建的** preset 做键名核对与自动修复（`MC_PRESET_SPEC` 升版会重建），手写/改过的那份一律不碰 |
+| F14 | **从 npm/registry 安装（非 link）的插件一律 `failed to import`**、整个不激活；**本机 link 调试却正常**（2026-10-06；issue #5 里 @Pub-Polaris 已顺带点出） | 宿主 `dsh-app-boot` 用 `ResolutionRouter` 补丁了 CJS `Module._resolveFilename`；其 `routeScoped()`（`lib/index.js` 约 1422 行）**对 link 层提前 `routeLinked` 返回、只有非 link 层**才走 `for (const p of createRequire(parent).resolve.paths(name))`。而 `readable-stream@4` 里是 `require('process/')`（**尾部带斜杠**，它留给打包器的写法）——普通 Node 把 `process/` 当内置 `process`，但 `resolve.paths('process/')` 返回 **null** ⇒ `for...of null` 抛 `TypeError: createRequire.resolve.paths is not a function or its return value is not iterable`。插件加载 mineflayer（依赖链含 readable-stream）时即炸 ⇒ bundle 拿不到 fiber、宿主只报一句 `failed to import`（本机 link 安装测不出）。**宿主 bug、与本插件无关**（issue #5 里已单独报给 DSH）。修法：`src/resolver-shim.mjs`（`index.js` 首条 import，必须早于 core.mjs）包一层 `_resolveFilename`，只在该 TypeError 时兜底 |
 
 ## 3. 设计决策记录（"为什么这么设计"）
 
@@ -107,6 +109,7 @@
 | 宿主包（`dsh-tools`/`schemastery`）**可缺省**，不塞进 `dependencies` | 塞 dependencies 会在 profile 里装出**第二份** Tool/schema，破坏"全进程单实例"语义（这正是它们当初被改成 optional peer 的原因）；宿主拿不到时用自带等价实现兜底，编译形状与报错文案**逐字对齐宿主**、由"无宿主模拟"自检钉死 |
 | `check-core` 抓"私有字段一致性" | 大文件少换行 → V8 提前结束 class → 报误导性错误；`config.mjs` 两行粘连只有动态 import 才炸 |
 | selfcheck 末尾恒 `exit(0)`、几乎不用 assert 库 | 设计成"人可读的 ✅ 清单"；只有 apply() 抛错才红——它定位是**回归护栏 + 文档**，不是严苛测试框架 |
+| 用 monkey-patch 宿主 `Module._resolveFilename`（`src/resolver-shim.mjs`）绕过 DSH rc.2 的 resolver bug | 宿主 `routeScoped` 对**非 link** 插件的 `require('process/')` 会崩，导致 registry 装出的插件整个不加载；bug 在宿主、我们改不了，而 registry 安装是主要分发方式。shim **只在原函数抛该特定 TypeError 时**兜底、其余请求逐字透传；属临时手段，宿主修好后删除（见 F14 与 §4 待办） |
 
 ## 4. 待办 / 已知边界
 
@@ -116,3 +119,4 @@
 - `mc_move/mc_act/mc_build` 官方定性"不成熟"（版本硬提示词里让 AI 优先 `mc_command`）。
 - 工具描述与文档目前中文。
 - 能连的 MC 版本取决于依赖里的 mineflayer（想连新版本可自行替换）。
+- **🔴 待办（等 DSH 修好 F14 的 resolver bug 后）**：删掉 `src/resolver-shim.mjs` + `index.js` 首条 `import './src/resolver-shim.mjs'`（连同 `src-modules.md` §16b 与本节这条），并记一条 CHANGELOG。判据：**registry（非 link）安装的插件加载 mineflayer 不再 `failed to import`**。

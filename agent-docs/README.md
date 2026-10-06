@@ -3,7 +3,7 @@
 > 面向接手本仓库的 AI agent（**只给 agent 看、由 agent 维护**；需要人看的底层设计放 [`dev-docs/`](../dev-docs/)）。**先读这一页**，再按需进入各专题。
 > 仓库根有一份 [`AGENTS.md`](../AGENTS.md) 作为引导入口（DSH 宿主会把根 `AGENTS.md` 当工作区指令自动注入），
 > 它只放"先读这里 + 最硬的几条铁律 + 验证命令"，完整地图与铁律速查以本页为准。
-> 快照：whale_craft **0.2.0**（**开发中，未发布**；自 `v0.1.7` 起累计：issue #1 修复、`tools/dev.mjs`、26.2 兼容层移除、DSH 版本范围、插件页本地化、按工作区 config.json、**设置两态 + 插件页「设置」入口 + 「连接到MC」弹窗 + 文件分享改开关**），2026-10-04。
+> 快照：whale_craft **0.2.0**（**开发中，未发布**；自 `v0.1.7` 起累计：issue #1 修复、`tools/dev.mjs`、26.2 兼容层移除、DSH 版本范围、插件页本地化、按工作区 config.json、**设置两态 + 插件页「设置」入口 + 「连接到MC」弹窗 + 文件分享改开关**）；**0.2.0-beta.1（2026-10-06）**已作为预览发布，已知：registry 安装后 `failed to import`（宿主 resolver bug，见 history.md F14，`src/resolver-shim.mjs` 临时兜底），2026-10-06。
 > 本文档写"机制与不变式（为什么）"；**细节以代码为准**，文档负责给地图与避坑指引。
 
 ## 项目一句话
@@ -28,7 +28,7 @@ DSH（DeepSeek Harness）原生插件：把一台无头 Minecraft 机器人（mi
 | `presets/*.patch.yml` | 「MC模式」「MC+模式」两个 preset 的**声明式**定义（0.2.0-rc.2+ 注册表；经 `dsh.bundle.patch` 数组随包挂载） |
 | `client.js`（~1.8k 行） | **浏览器半端 bundle**（手写 factory，无构建步骤，HMR 热更）：状态条 / MC设置弹窗 / 新会话页 hero 入口 |
 | `src/core.mjs`（~2k 行） | `McBot`：mineflayer 封装（连接/重连/动作/观察/协议护栏）；**不依赖 DSH**，可独立测试 |
-| `src/*.mjs` | 15 个协作模块（watchdog / memory / config / **wsconfig** / **protected** / accounts / agentsmd / express / image / png / lan / ping / wait / user-message / version-prompt），全部由 index.js 组装 |
+| `src/*.mjs` | 16 个协作模块（watchdog / memory / config / **wsconfig** / **protected** / accounts / agentsmd / express / image / png / lan / ping / wait / user-message / version-prompt / **resolver-shim**），全部由 index.js 组装 |
 | `tools/` | `check-core.mjs`（静态检查）、`dev.mjs`（隔离调试实例，**本机主用**）、`isolate.mjs`（老方式，需 DSH 源码 checkout） |
 | `selfcheck.mjs`（~3.5k 行） | 600+ 条离线断言：假 ctx 加载**真** `apply()`，不连 MC |
 | `scripts/` | `publish-npm.mjs`（本机手动发 npm）、`land-workflow-fix.mjs`（工作流文件落地）、`release.workflow.yml`（模板） |
